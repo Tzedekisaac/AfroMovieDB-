@@ -1,0 +1,6 @@
+{
+  "name": "NaijaReel - Nigerian Movie Catalogue",
+  "description": "Comprehensive Nollywood catalogue showcasing iconic Nigerian films, golden era classics, indigenous folklore epics, box office blockbusters, and streaming guides.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
