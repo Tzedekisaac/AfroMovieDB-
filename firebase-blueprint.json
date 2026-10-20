@@ -1,0 +1,251 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile data and personal cloud watchlist",
+      "type": "object",
+      "properties": {
+        "watchlist": {
+          "type": "array",
+          "description": "List of movie IDs saved in user watchlist"
+        },
+        "trackingList": {
+          "type": "array",
+          "description": "List of tracked movie items with status and rewatch count"
+        },
+        "customTmdbApiKey": {
+          "type": "string",
+          "description": "Personal external TMDb API key"
+        },
+        "theme": {
+          "type": "string",
+          "description": "Active UI theme: emerald, gold, or obsidian",
+          "enum": ["emerald", "gold", "obsidian"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp of last update"
+        }
+      }
+    },
+    "Review": {
+      "title": "Review",
+      "description": "User review and rating for a Nollywood film",
+      "type": "object",
+      "properties": {
+        "movieId": {
+          "type": "string",
+          "description": "ID of the movie being reviewed"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Author name"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Rating score between 1 and 10"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Review text"
+        },
+        "userLocation": {
+          "type": "string",
+          "description": "City or country of the reviewer"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the reviewer"
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Email address of reviewer"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["movieId", "userName", "rating", "comment"]
+    },
+    "Movie": {
+      "title": "Movie",
+      "description": "Nollywood movie record with full catalog metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique movie identifier slug"
+        },
+        "title": {
+          "type": "string",
+          "description": "Movie title"
+        },
+        "nativeTitle": {
+          "type": "string",
+          "description": "Indigenous language title"
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Short marketing tagline or quote"
+        },
+        "releaseYear": {
+          "type": "number",
+          "description": "The release year"
+        },
+        "director": {
+          "type": "string",
+          "description": "Director name"
+        },
+        "directorAvatarUrl": {
+          "type": "string",
+          "description": "Profile picture of the director"
+        },
+        "directorTmdbId": {
+          "type": "number",
+          "description": "TMDb person ID of the director"
+        },
+        "synopsis": {
+          "type": "string",
+          "description": "Movie synopsis and plot overview"
+        },
+        "culturalSignificance": {
+          "type": "string",
+          "description": "Nollywood impact and cultural reception"
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "URL to the portrait poster"
+        },
+        "backdropUrl": {
+          "type": "string",
+          "description": "URL to the landscape hero backdrop banner"
+        },
+        "runtimeMinutes": {
+          "type": "number",
+          "description": "Duration in minutes"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Community or IMDb rating"
+        },
+        "boxOffice": {
+          "type": "string",
+          "description": "Box office gross or milestone"
+        },
+        "trailerYoutubeId": {
+          "type": "string",
+          "description": "YouTube video ID for the official trailer"
+        },
+        "leadCast": {
+          "type": "array",
+          "description": "List of cast members with actor name and role"
+        },
+        "genres": {
+          "type": "array",
+          "description": "List of movie genres"
+        },
+        "languages": {
+          "type": "array",
+          "description": "Languages spoken in the film"
+        },
+        "era": {
+          "type": "string",
+          "description": "Nollywood historical era"
+        },
+        "streamingPlatforms": {
+          "type": "array",
+          "description": "Platforms where the film is available"
+        },
+        "addedByUserId": {
+          "type": "string",
+          "description": "Firebase UID of user who contributed or edited the film"
+        },
+        "lastEditedByUserId": {
+          "type": "string",
+          "description": "Firebase UID of last authenticated user who edited the film"
+        },
+        "syncedAt": {
+          "type": "string",
+          "description": "Last updated or synced timestamp"
+        }
+      },
+      "required": ["id", "title", "director", "synopsis"]
+    },
+    "CustomUserList": {
+      "title": "CustomUserList",
+      "description": "Custom-themed movie collection curated and published by a user",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique collection identifier"
+        },
+        "title": {
+          "type": "string",
+          "description": "Collection title e.g. Top 10 Epic Costumes"
+        },
+        "description": {
+          "type": "string",
+          "description": "Curator summary and overview of the list"
+        },
+        "creatorId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the list curator"
+        },
+        "creatorName": {
+          "type": "string",
+          "description": "Display name of curator"
+        },
+        "creatorAvatar": {
+          "type": "string",
+          "description": "Avatar headshot URL of curator"
+        },
+        "movieIds": {
+          "type": "array",
+          "description": "Ordered list of movie IDs included in collection"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Whether collection is publicly viewable via deep link"
+        },
+        "curatorNote": {
+          "type": "string",
+          "description": "Editorial curator note"
+        },
+        "theme": {
+          "type": "string",
+          "description": "Accent aesthetic theme for standalone view",
+          "enum": ["emerald", "gold", "obsidian"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last modified timestamp"
+        }
+      },
+      "required": ["id", "title", "creatorId", "movieIds"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile with private cloud watchlist"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Public movie reviews written by users"
+    },
+    "/custom_movies/{movieId}": {
+      "schema": { "$ref": "#/entities/Movie" },
+      "description": "Custom, edited, or synced Nollywood movie entries"
+    },
+    "/custom_lists/{listId}": {
+      "schema": { "$ref": "#/entities/CustomUserList" },
+      "description": "Public and user curated themed film collections"
+    }
+  }
+}

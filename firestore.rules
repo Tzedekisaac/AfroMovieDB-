@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // User profile, private tracking list, and personal API keys
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Public reviews for Nollywood films
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && (resource.data.userId == request.auth.uid || request.auth.token.email != null);
+    }
+    
+    // Custom user-added or synced movies
+    match /custom_movies/{movieId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Public and user curated themed film collections
+    match /custom_lists/{listId} {
+      allow read: if resource.data.isPublic == true || (request.auth != null && resource.data.creatorId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.creatorId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.creatorId == request.auth.uid;
+    }
+  }
+}
