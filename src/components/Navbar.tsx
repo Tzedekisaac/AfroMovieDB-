@@ -132,17 +132,19 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action buttons */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-            {/* Add Movie / Auto-Pull Trigger */}
-            <button
-              id="open-autopull-btn"
-              onClick={onOpenAutoPull}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full ${activeTheme === 'obsidian' ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white' : activeTheme === 'gold' ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950' : 'bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950'} hover:brightness-110 shadow-md hover:scale-102 active:scale-95 transition-all cursor-pointer`}
-              title="Add Movie or Auto-Pull from Web"
-            >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span className="hidden sm:inline">Add Film</span>
-              <span className="sm:hidden">Add</span>
-            </button>
+            {/* Add Movie / Auto-Pull Trigger (Authenticated Users Only) */}
+            {currentUser && (
+              <button
+                id="open-autopull-btn"
+                onClick={onOpenAutoPull}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full ${activeTheme === 'obsidian' ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white' : activeTheme === 'gold' ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950' : 'bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950'} hover:brightness-110 shadow-md hover:scale-102 active:scale-95 transition-all cursor-pointer`}
+                title="Add Movie or Auto-Pull from Web"
+              >
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                <span className="hidden sm:inline">Add Film</span>
+                <span className="sm:hidden">Add</span>
+              </button>
+            )}
 
             {/* Box Office Highlight Shortcut */}
             <button
@@ -175,12 +177,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Watchlist Button */}
             <button
               id="open-watchlist-btn"
-              onClick={onOpenWatchlist}
+              onClick={() => {
+                if (!currentUser) {
+                  onOpenAuth();
+                } else {
+                  onOpenWatchlist();
+                }
+              }}
               className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-full ${watchlistBtnStyle} shadow-md transition-all cursor-pointer`}
+              title={currentUser ? "View your saved watchlist" : "Sign in to access your watchlist"}
             >
               <Bookmark className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="hidden sm:inline">Watchlist</span>
-              {watchlistCount > 0 && (
+              {currentUser && watchlistCount > 0 && (
                 <span className="inline-flex items-center justify-center px-1.5 py-0.2 text-[11px] font-bold leading-none bg-amber-400 text-slate-950 rounded-full">
                   {watchlistCount}
                 </span>

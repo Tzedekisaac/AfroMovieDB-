@@ -17,6 +17,7 @@ interface MovieCardProps {
   viewMode?: 'grid' | 'compact';
   currentUser?: FirebaseUser | null;
   onOpenEdit?: (movie: Movie) => void;
+  onOpenAuth?: () => void;
 }
 
 export const MovieCard: React.FC<MovieCardProps> = ({
@@ -30,7 +31,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   onDeleteMovie,
   viewMode = 'grid',
   currentUser,
-  onOpenEdit
+  onOpenEdit,
+  onOpenAuth
 }) => {
   const [imgError, setImgError] = useState(false);
 
@@ -110,16 +112,35 @@ export const MovieCard: React.FC<MovieCardProps> = ({
               <Play className="w-4 h-4" />
             </button>
             <SharePopover movieTitle={movie.title} movieId={movie.id} variant="icon-only" />
+            {currentUser && movie.isUserAdded && onDeleteMovie && (
+              <button
+                id={`compact-delete-${movie.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Remove "${movie.title}" from your catalogue?`)) {
+                    onDeleteMovie(movie.id);
+                  }
+                }}
+                className="p-2 rounded-lg bg-slate-800/80 hover:bg-rose-950/60 text-slate-300 hover:text-rose-400 border border-slate-700/60 hover:border-rose-500/40 transition-colors"
+                title="Remove Movie"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
             {currentUser && onOpenEdit && (
               <button
-                onClick={() => onOpenEdit(movie)}
+                id={`compact-edit-${movie.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenEdit(movie);
+                }}
                 className="p-2 rounded-lg bg-slate-800/80 hover:bg-emerald-600/30 text-slate-200 hover:text-emerald-300 border border-slate-700/60 hover:border-emerald-500/40 transition-colors"
                 title="Edit Movie (Authenticated User)"
               >
                 <Pencil className="w-4 h-4" />
               </button>
             )}
-            {onUpdateStatus ? (
+            {currentUser && onUpdateStatus ? (
               <TrackingStatusPicker 
                 movieId={movie.id}
                 currentStatus={watchStatus || (isWatchlisted ? 'plan_to_watch' : null)}
@@ -128,20 +149,28 @@ export const MovieCard: React.FC<MovieCardProps> = ({
               />
             ) : (
               <button
-                onClick={() => onToggleWatchlist(movie.id)}
-                className={`p-2 rounded-lg border transition-all ${
-                  isWatchlisted 
+                id={`compact-bookmark-${movie.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!currentUser) {
+                    if (onOpenAuth) onOpenAuth();
+                  } else {
+                    onToggleWatchlist(movie.id);
+                  }
+                }}
+                className={`p-2 rounded-lg border transition-all cursor-pointer ${
+                  currentUser && isWatchlisted 
                     ? 'bg-amber-500/20 border-amber-500 text-amber-400 shadow-sm' 
                     : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300 hover:text-white'
                 }`}
-                title={isWatchlisted ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                title={!currentUser ? 'Sign in to add to Watchlist' : isWatchlisted ? 'Remove from Watchlist' : 'Add to Watchlist'}
               >
-                <Bookmark className={`w-4 h-4 ${isWatchlisted ? 'fill-amber-400' : ''}`} />
+                <Bookmark className={`w-4 h-4 ${currentUser && isWatchlisted ? 'fill-amber-400 text-amber-400' : ''}`} />
               </button>
             )}
             <button
               onClick={() => onSelect(movie)}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-all"
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer"
             >
               Details
             </button>
@@ -160,7 +189,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
       {/* Top Banner / Poster */}
       <div 
         onClick={() => onSelect(movie)}
-        className="relative aspect-[16/10] sm:aspect-[4/3] w-full overflow-hidden bg-slate-950 cursor-pointer"
+        className="relative aspect-[16/11] sm:aspect-[4/3] w-full min-h-[190px] sm:min-h-[220px] overflow-hidden bg-slate-950 cursor-pointer"
       >
         <img 
           src={displayPoster} 
@@ -171,25 +200,31 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         />
 
         {/* Gradient overlays for cinematic depth */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/30 to-transparent" />
-        <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors duration-300" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
+        <div className="absolute inset-0 bg-black/15 group-hover:bg-transparent transition-colors duration-300" />
 
-        {/* Top Badges & Actions */}
-        <div className="absolute top-3 inset-x-3 flex items-start justify-between gap-2 pointer-events-none">
-          <div className="flex flex-col gap-1.5 items-start">
-            <span className="pointer-events-auto px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-slate-950/80 backdrop-blur-md text-emerald-400 border border-emerald-500/30 shadow-sm">
+        {/* Top Action Bar (Neat, semi-transparent row with adequate padding) */}
+        <div className="absolute top-0 inset-x-0 px-3 py-2.5 sm:px-3.5 sm:py-3 flex items-center justify-between z-10 bg-gradient-to-b from-slate-950/85 via-slate-950/45 to-transparent pointer-events-none">
+          {/* Left Badges (Year & Featured Flame) */}
+          <div className="flex items-center gap-1.5 pointer-events-auto">
+            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-extrabold tracking-wider bg-slate-950/85 backdrop-blur-md text-emerald-400 border border-emerald-500/30 shadow-sm">
               {movie.releaseYear}
             </span>
             {movie.featured && (
-              <span className="pointer-events-auto px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-amber-500 text-slate-950 flex items-center gap-1 shadow-md">
+              <span 
+                className="p-1 sm:px-2 sm:py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-amber-500 text-slate-950 flex items-center gap-1 shadow-md"
+                title="Featured Nollywood Cinema"
+              >
                 <Flame className="w-3 h-3 fill-current" />
-                Featured
+                <span className="hidden sm:inline">Featured</span>
               </span>
             )}
           </div>
 
-          <div className="pointer-events-auto flex items-center gap-1.5">
-            {movie.isUserAdded && onDeleteMovie && (
+          {/* Right Action Icons Row (Neat semi-transparent pill container) */}
+          <div className="pointer-events-auto flex items-center gap-1 bg-slate-950/80 backdrop-blur-md border border-slate-700/60 rounded-full px-1.5 py-1 shadow-md">
+            {/* Delete button (Gated to authenticated creators/owners only) */}
+            {currentUser && movie.isUserAdded && onDeleteMovie && (
               <button
                 id={`delete-${movie.id}`}
                 onClick={(e) => {
@@ -198,14 +233,14 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                     onDeleteMovie(movie.id);
                   }
                 }}
-                className="p-2 rounded-full backdrop-blur-md bg-slate-900/80 hover:bg-red-950/90 text-slate-300 hover:text-red-400 border border-slate-700/60 hover:border-red-500/40 transition-all shadow-md"
+                className="p-1.5 rounded-full text-slate-300 hover:text-rose-400 hover:bg-rose-500/20 transition-all cursor-pointer"
                 title="Remove Movie"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             )}
-            {/* Popover Share Menu */}
-            <SharePopover movieTitle={movie.title} movieId={movie.id} variant="icon-only" />
+
+            {/* Edit button (Gated to authenticated users only) */}
             {currentUser && onOpenEdit && (
               <button
                 id={`edit-card-${movie.id}`}
@@ -213,13 +248,18 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                   e.stopPropagation();
                   onOpenEdit(movie);
                 }}
-                className="p-2 rounded-full backdrop-blur-md bg-slate-900/80 hover:bg-emerald-600 text-slate-200 hover:text-white border border-slate-700/60 hover:border-emerald-400 transition-all shadow-md group/edit"
-                title="Edit Movie (Authenticated User)"
+                className="p-1.5 rounded-full text-slate-300 hover:text-emerald-300 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                title="Edit Movie Details"
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
             )}
-            {onUpdateStatus ? (
+
+            {/* Popover Share Menu */}
+            <SharePopover movieTitle={movie.title} movieId={movie.id} variant="icon-only" />
+
+            {/* Watchlist / Multi-Status Tracking Button (Auth-gated) */}
+            {currentUser && onUpdateStatus ? (
               <div onClick={(e) => e.stopPropagation()}>
                 <TrackingStatusPicker 
                   movieId={movie.id}
@@ -233,71 +273,71 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                 id={`bookmark-${movie.id}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onToggleWatchlist(movie.id);
+                  if (!currentUser) {
+                    if (onOpenAuth) onOpenAuth();
+                  } else {
+                    onToggleWatchlist(movie.id);
+                  }
                 }}
-                className={`p-2 rounded-full backdrop-blur-md transition-all shadow-md ${
-                  isWatchlisted
-                    ? 'bg-amber-500 text-slate-950 shadow-amber-500/30 hover:bg-amber-400 scale-105'
-                    : 'bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/60'
+                className={`p-1.5 rounded-full transition-all cursor-pointer ${
+                  currentUser && isWatchlisted
+                    ? 'text-amber-400 bg-amber-400/20 hover:bg-amber-400/30'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
-                title={isWatchlisted ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                title={!currentUser ? 'Sign in to add to Watchlist' : isWatchlisted ? 'Remove from Watchlist' : 'Add to Watchlist'}
               >
-                <Bookmark className={`w-3.5 h-3.5 ${isWatchlisted ? 'fill-current' : ''}`} />
+                <Bookmark className={`w-3.5 h-3.5 ${currentUser && isWatchlisted ? 'fill-current text-amber-400' : ''}`} />
               </button>
             )}
           </div>
         </div>
 
-        {/* Box office banner pill if applicable */}
-        {movie.boxOfficeChampion && (
-          <div className="absolute bottom-12 left-3 pointer-events-none">
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/90 backdrop-blur-sm text-slate-950 flex items-center gap-1 shadow-md">
-              <Trophy className="w-3 h-3" />
-              ₦1B+ Club
-            </span>
-          </div>
-        )}
-
         {/* Play Trailer Floating Overlay on Hover */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-10">
           <button
             onClick={(e) => {
               e.stopPropagation();
               onOpenTrailer(movie);
             }}
-            className="pointer-events-auto flex items-center gap-2 px-3.5 py-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-xl shadow-emerald-950/60 hover:scale-105 active:scale-95 transition-all"
+            className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-xl shadow-emerald-950/60 hover:scale-105 active:scale-95 transition-all cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>Watch Trailer</span>
           </button>
         </div>
 
-        {/* Bottom edge info within image */}
-        <div className="absolute bottom-2.5 inset-x-3 flex items-center justify-between text-xs pointer-events-none">
-          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-950/80 backdrop-blur-md border border-slate-800">
+        {/* Bottom edge info within image (Ratings & Runtime neatly anchored) */}
+        <div className="absolute bottom-0 inset-x-0 px-3 py-2.5 sm:px-3.5 sm:py-3 flex items-center justify-between text-xs pointer-events-none bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent z-10">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-sm pointer-events-auto">
             <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
             <span className="font-bold text-white text-[11px]">{movie.rating.toFixed(1)}</span>
             <span className="text-[10px] text-slate-400">/10</span>
           </div>
-          <span className="px-2 py-0.5 text-[10px] font-medium text-slate-300 bg-slate-950/70 backdrop-blur-md rounded border border-slate-800/80">
-            {movie.runtimeMinutes} min
+          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-sm pointer-events-auto">
+            {movie.runtimeMinutes || 105} min
           </span>
         </div>
       </div>
 
       {/* Card Body */}
-      <div className="flex flex-col flex-1 p-4 space-y-3">
-        {/* Genre Tags */}
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-col flex-1 p-4 sm:p-5 space-y-3 bg-slate-900/80 group-hover:bg-slate-900 transition-colors">
+        {/* Genre Tags, Box Office Champion Pill & Era */}
+        <div className="flex flex-wrap items-center gap-1.5 min-h-[22px]">
+          {movie.boxOfficeChampion && (
+            <span className="px-2 py-0.5 text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-full flex items-center gap-1 shadow-sm">
+              <Trophy className="w-3 h-3 text-amber-400" />
+              ₦1B+ Club
+            </span>
+          )}
           {Array.from(new Set(movie.genres)).slice(0, 2).map((genre, idx) => (
             <span 
               key={`${genre}-${idx}`}
-              className="px-2 py-0.5 text-[10px] font-semibold text-slate-300 bg-slate-800/70 rounded-full border border-slate-700/40"
+              className="px-2.5 py-0.5 text-[10px] font-semibold text-slate-300 bg-slate-800/80 rounded-full border border-slate-700/40"
             >
               {genre}
             </span>
           ))}
-          <span className="text-[10px] text-slate-500 ml-auto">
+          <span className="text-[10px] text-slate-400 font-medium ml-auto">
             {movie.era.split('(')[0].trim()}
           </span>
         </div>
@@ -322,7 +362,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         </div>
 
         {/* Cast & Director */}
-        <div className="text-xs text-slate-400 border-t border-slate-800/80 pt-2.5 space-y-1">
+        <div className="text-xs text-slate-400 border-t border-slate-800/80 pt-2.5 space-y-1 mt-auto">
           <p className="line-clamp-1 text-[11px]">
             <span className="text-slate-500">Dir:</span> <span className="text-slate-300 font-medium">{movie.director}</span>
           </p>
@@ -332,10 +372,10 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         </div>
 
         {/* Action button & Popover Share button */}
-        <div className="pt-1 flex items-center gap-2">
+        <div className="pt-2 flex items-center gap-2">
           <button
             onClick={() => onSelect(movie)}
-            className="flex-1 py-2 text-center text-xs font-semibold rounded-lg bg-slate-800/80 hover:bg-emerald-600 text-slate-200 hover:text-white transition-all duration-200 shadow-sm"
+            className="flex-1 py-2 text-center text-xs font-semibold rounded-lg bg-slate-800/80 hover:bg-emerald-600 text-slate-200 hover:text-white transition-all duration-200 shadow-sm cursor-pointer"
           >
             View Film Archive
           </button>

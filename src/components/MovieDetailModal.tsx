@@ -28,6 +28,7 @@ interface MovieDetailModalProps {
   currentUser?: FirebaseUser | null;
   onOpenEdit?: (movie: Movie) => void;
   onUpdateMovie?: (movie: Movie) => void;
+  onOpenAuth?: () => void;
 }
 
 export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
@@ -46,7 +47,8 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   onAddReview,
   currentUser,
   onOpenEdit,
-  onUpdateMovie
+  onUpdateMovie,
+  onOpenAuth
 }) => {
   // Review form state
   const [userName, setUserName] = useState('');
@@ -276,8 +278,18 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 </button>
               )}
 
-              {/* Multi-Status Tracking Picker */}
-              {onUpdateStatus ? (
+              {/* Multi-Status Tracking Picker (Authenticated) or Auth-Gated Watchlist (Guest) */}
+              {!currentUser ? (
+                <button
+                  id="modal-toggle-watchlist-btn"
+                  onClick={() => onOpenAuth ? onOpenAuth() : onToggleWatchlist(movie.id)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/50 cursor-pointer shadow-md"
+                  title="Sign in to save to your watchlist"
+                >
+                  <Bookmark className="w-4 h-4 text-amber-400" />
+                  <span>Add to Watchlist</span>
+                </button>
+              ) : onUpdateStatus ? (
                 <TrackingStatusPicker
                   movieId={movie.id}
                   currentStatus={watchStatus || (isWatchlisted ? 'plan_to_watch' : null)}

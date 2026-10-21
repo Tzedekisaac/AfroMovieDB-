@@ -18,6 +18,7 @@ import {
   deleteFirestoreReview,
   subscribeToCustomMovies, 
   saveFirestoreCustomMovie, 
+  saveMultipleFirestoreMovies,
   deleteFirestoreCustomMovie,
   updateFirestoreMovie 
 } from './lib/firestoreService';
@@ -248,6 +249,11 @@ export default function App() {
           const cloudIds = new Set(cloudMovies.map(m => m.id));
           const localOnly = prev.filter(m => !cloudIds.has(m.id));
           return [...cloudMovies, ...localOnly];
+        });
+        setSelectedMovie(curr => {
+          if (!curr) return null;
+          const match = cloudMovies.find(m => m.id === curr.id);
+          return match || curr;
         });
       }
     });
@@ -640,12 +646,10 @@ export default function App() {
           return updated;
         });
 
-        // Persist top discoveries to Firestore if authenticated
-        if (currentUser) {
-          for (const movie of result.newMovies.slice(0, 15)) {
-            saveFirestoreCustomMovie(movie, currentUser.uid).catch(() => {});
-          }
-        }
+        // Persist all imported movies directly to Firebase Firestore custom_movies collection
+        saveMultipleFirestoreMovies(result.newMovies, currentUser?.uid).catch(err => {
+          console.warn('Failed to save historical sweep movies to Firestore:', err);
+        });
       }
     } catch (err) {
       console.error('Historical sweep error:', err);
@@ -753,12 +757,10 @@ export default function App() {
             return updated;
           });
 
-          // Also persist top discoveries to Firestore if authenticated
-          if (currentUser) {
-            for (const movie of result.syncedMovies.slice(0, 8)) {
-              saveFirestoreCustomMovie(movie, currentUser.uid).catch(() => {});
-            }
-          }
+          // Also persist all new releases to Firebase Firestore custom_movies collection
+          saveMultipleFirestoreMovies(result.syncedMovies, currentUser?.uid).catch(err => {
+            console.warn('Failed to save auto-synced movies to Firestore:', err);
+          });
 
           setSyncNotice(`AfroMovieDB automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
           setTimeout(() => {
@@ -1031,6 +1033,7 @@ export default function App() {
           onToggleWatchlist={handleToggleWatchlist}
           trackingMap={trackingMap}
           onUpdateStatus={handleUpdateTrackingStatus}
+          onOpenAuth={() => setIsAuthOpen(true)}
         />
       ) : currentView === 'profile' ? (
         <UserProfilePage
@@ -1081,6 +1084,7 @@ export default function App() {
               onToggleWatchlist={handleToggleWatchlist}
               currentUser={currentUser}
               onOpenEdit={(movie) => setEditingMovie(movie)}
+              onOpenAuth={() => setIsAuthOpen(true)}
             />
           )}
 
@@ -1161,13 +1165,22 @@ export default function App() {
                   >
                     Reset All Filters
                   </button>
-                  <button
-                    onClick={() => setIsAutoPullOpen(true)}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-amber-600 hover:brightness-110 text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-md"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Auto-Pull from Online Registry</span>
-                  </button>
+                  {currentUser ? (
+                    <button
+                      onClick={() => setIsAutoPullOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-amber-600 hover:brightness-110 text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-md"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Auto-Pull from Online Registry</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setIsAuthOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+                    >
+                      <span>Sign In to Add Titles</span>
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1175,7 +1188,7 @@ export default function App() {
                 {viewMode === 'grid' ? (
                   <div 
                     id="movies-grid"
-                    className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 sm:gap-6"
+                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8"
                   >
                     {displayedMovies.map((movie) => (
                       <MovieCard
@@ -1191,6 +1204,7 @@ export default function App() {
                         viewMode="grid"
                         currentUser={currentUser}
                         onOpenEdit={(m) => setEditingMovie(m)}
+                        onOpenAuth={() => setIsAuthOpen(true)}
                       />
                     ))}
                   </div>
@@ -1213,6 +1227,7 @@ export default function App() {
                         viewMode="compact"
                         currentUser={currentUser}
                         onOpenEdit={(m) => setEditingMovie(m)}
+                        onOpenAuth={() => setIsAuthOpen(true)}
                       />
                     ))}
                   </div>
@@ -1259,20 +1274,27 @@ export default function App() {
       />
 
       {/* Movie Details Modal */}
-      <MovieDetailModal
-        movie={selectedMovie}
-        onClose={() => setSelectedMovie(null)}
-        onOpenTrailer={setTrailerMovie}
-        isWatchlisted={selectedMovie ? watchlistIds.includes(selectedMovie.id) : false}
-        onToggleWatchlist={handleToggleWatchlist}
-        allMovies={moviesList}
-        onSelectMovie={setSelectedMovie}
-        reviews={reviews}
-        onAddReview={handleAddReview}
-        currentUser={currentUser}
-        onOpenEdit={(m) => setEditingMovie(m)}
-        onUpdateMovie={handleUpdateMovie}
-      />
+      {selectedMovie && (
+        <MovieDetailModal
+          movie={selectedMovie}
+          onClose={() => setSelectedMovie(null)}
+          onOpenTrailer={setTrailerMovie}
+          isWatchlisted={watchlistIds.includes(selectedMovie.id)}
+          onToggleWatchlist={handleToggleWatchlist}
+          watchStatus={trackingMap.get(selectedMovie.id)?.status || (watchlistIds.includes(selectedMovie.id) ? 'plan_to_watch' : null)}
+          onUpdateStatus={handleUpdateTrackingStatus}
+          rewatchCount={trackingMap.get(selectedMovie.id)?.rewatchCount || 0}
+          onUpdateRewatchCount={handleUpdateRewatchCount}
+          allMovies={moviesList}
+          onSelectMovie={setSelectedMovie}
+          reviews={reviews}
+          onAddReview={handleAddReview}
+          currentUser={currentUser}
+          onOpenEdit={(m) => setEditingMovie(m)}
+          onUpdateMovie={handleUpdateMovie}
+          onOpenAuth={() => setIsAuthOpen(true)}
+        />
+      )}
 
       {/* Dedicated Edit Movie Modal (Exclusively for Authenticated Firebase Users) */}
       <EditMovieModal

@@ -754,7 +754,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8">
                 {visibleTracked.map(({ item, movie }) => {
                   const statusCfg = STATUS_CONFIG[item.status];
                   const IconComp = statusCfg.icon;
@@ -913,7 +913,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8">
             {personalizedRecommendations.map(({ movie, reason, matchingGenres, matchingDirector, matchingActors }) => (
               <div
                 key={`rec-${movie.id}`}

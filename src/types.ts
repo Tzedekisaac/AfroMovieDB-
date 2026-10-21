@@ -74,6 +74,7 @@ export interface Movie {
   addedByUserId?: string | null;
   lastEditedByUserId?: string | null;
   syncedAt?: any;
+  tmdbId?: number;
 }
 
 export interface PersonProfileData {

@@ -210,7 +210,8 @@ export function pruneExpiredCache(): void {
 export async function searchMoviesOnline(query: string, forceRefresh: boolean = false): Promise<WebMovieCandidate[]> {
   if (!query.trim()) return [];
 
-  const cacheKey = `search_${query.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+  const cleanQuery = query.trim();
+  const cacheKey = `search_${cleanQuery.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
   if (!forceRefresh) {
     const cached = getCachedItem<WebMovieCandidate[]>(cacheKey);
     if (cached) {
@@ -218,30 +219,22 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
     }
   }
 
-  let queryText = query.trim();
-  const lowerQuery = queryText.toLowerCase();
-
-  // If query doesn't already contain Nigerian cinema qualifiers, append 'Nollywood'
-  if (!lowerQuery.includes('nollywood') && !lowerQuery.includes('nigerian')) {
-    queryText = `${queryText} Nollywood`;
-  }
+  const apiKey = getActiveTmdbApiKey();
+  const lowerQuery = cleanQuery.toLowerCase();
+  let results: any[] = [];
 
   try {
-    const encoded = encodeURIComponent(queryText);
-    const url = `${TMDB_BASE_URL}/search/movie?api_key=${getActiveTmdbApiKey()}&query=${encoded}&include_adult=false&language=en-US&page=1`;
-
-    let response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`TMDb API responded with status ${response.status}`);
+    // 1. Direct raw title query first (essential for classic Nollywood titles like Saworoide, Domitilla, Karishika, Issakaba)
+    const rawUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(cleanQuery)}&include_adult=false&language=en-US&page=1`;
+    const rawRes = await fetch(rawUrl);
+    if (rawRes.ok) {
+      const rawData = await rawRes.json();
+      results = rawData.results || [];
     }
 
-    let data = await response.json();
-    let results = data.results || [];
-
-    // Fallback: If no results with 'Nollywood', try appending 'Nigerian movie'
-    if (results.length === 0 && !lowerQuery.includes('nigerian')) {
-      const fallbackQuery = `${query.trim()} Nigerian movie`;
-      const fallbackUrl = `${TMDB_BASE_URL}/search/movie?api_key=${getActiveTmdbApiKey()}&query=${encodeURIComponent(fallbackQuery)}&include_adult=false&language=en-US&page=1`;
+    // 2. If nothing found, search with 'Nollywood' appended to avoid foreign title collisions
+    if (results.length === 0 && !lowerQuery.includes('nollywood')) {
+      const fallbackUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nollywood`)}&include_adult=false&language=en-US&page=1`;
       const fallbackRes = await fetch(fallbackUrl);
       if (fallbackRes.ok) {
         const fallbackData = await fallbackRes.json();
@@ -249,17 +242,17 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
       }
     }
 
-    // Secondary fallback: original title query if still zero
-    if (results.length === 0) {
-      const rawUrl = `${TMDB_BASE_URL}/search/movie?api_key=${getActiveTmdbApiKey()}&query=${encodeURIComponent(query.trim())}&include_adult=false&language=en-US&page=1`;
-      const rawRes = await fetch(rawUrl);
-      if (rawRes.ok) {
-        const rawData = await rawRes.json();
-        results = rawData.results || [];
+    // 3. Fallback with 'Nigerian movie'
+    if (results.length === 0 && !lowerQuery.includes('nigerian')) {
+      const fallbackUrl2 = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nigerian movie`)}&include_adult=false&language=en-US&page=1`;
+      const fallbackRes2 = await fetch(fallbackUrl2);
+      if (fallbackRes2.ok) {
+        const fallbackData2 = await fallbackRes2.json();
+        results = fallbackData2.results || [];
       }
     }
 
-    const formatted = results.map((item: any) => formatTmdbResult(item, query));
+    const formatted = results.map((item: any) => formatTmdbResult(item, cleanQuery));
     if (formatted.length > 0) {
       setCachedItem(cacheKey, formatted, SEARCH_TTL_MS);
     }
@@ -272,17 +265,18 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
 
 function formatTmdbResult(item: any, fallbackTitle: string): WebMovieCandidate {
   const year = item.release_date ? parseInt(item.release_date.split('-')[0], 10) : new Date().getFullYear();
+  const fallbackPoster = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=800&auto=format&fit=crop';
   const posterPath = item.poster_path 
     ? `${TMDB_IMAGE_BASE}/w780${item.poster_path}`
-    : '';
+    : fallbackPoster;
   const backdropPath = item.backdrop_path
     ? `${TMDB_IMAGE_BASE}/original${item.backdrop_path}`
-    : (posterPath || '');
+    : posterPath;
 
   return {
     tmdbId: item.id,
     title: item.title || item.original_title || fallbackTitle,
-    originalTitle: item.original_title,
+    originalTitle: item.original_title || '',
     releaseYear: isNaN(year) ? new Date().getFullYear() : year,
     overview: item.overview || 'No synopsis available from web database.',
     posterUrl: posterPath,
@@ -290,14 +284,16 @@ function formatTmdbResult(item: any, fallbackTitle: string): WebMovieCandidate {
     rating: item.vote_average ? Math.round(item.vote_average * 10) / 10 : 7.8,
     ratingCount: item.vote_count || 120,
     genreIds: item.genre_ids || [],
-    language: item.original_language,
+    language: item.original_language || 'en',
     popularity: item.popularity || 0
   };
 }
 
 /**
- * Bulk discovery connecting to TMDb discover endpoint specifically for Nigerian films (with_origin_country=NG).
- * Supports pagination, date range filtering, and sorts by release_date.desc or popularity.desc.
+ * Enhanced multi-endpoint discovery connecting to TMDb:
+ * Queries multiple endpoints (with_origin_country=NG, with_original_language=yo|ig|ha,
+ * and fallback keyword searches for 'Nollywood' and 'Nigerian') to guarantee comprehensive coverage
+ * for both new releases and historical eras.
  */
 export async function discoverNigerianMovies(
   page: number = 1,
@@ -305,29 +301,69 @@ export async function discoverNigerianMovies(
   dateRange?: { gte?: string; lte?: string }
 ): Promise<{ candidates: WebMovieCandidate[]; totalPages: number; totalResults: number }> {
   try {
-    let url = `${TMDB_BASE_URL}/discover/movie?api_key=${getActiveTmdbApiKey()}&with_origin_country=NG&sort_by=${sortBy}&page=${page}&include_adult=false&vote_count.gte=0`;
-    
-    if (dateRange?.gte) {
-      url += `&primary_release_date.gte=${dateRange.gte}`;
-    }
-    if (dateRange?.lte) {
-      url += `&primary_release_date.lte=${dateRange.lte}`;
+    const apiKey = getActiveTmdbApiKey();
+    const urls: string[] = [];
+
+    // Endpoint 1: with_origin_country=NG
+    let urlOrigin = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=${sortBy}&page=${page}&include_adult=false&vote_count.gte=0`;
+    if (dateRange?.gte) urlOrigin += `&primary_release_date.gte=${dateRange.gte}`;
+    if (dateRange?.lte) urlOrigin += `&primary_release_date.lte=${dateRange.lte}`;
+    urls.push(urlOrigin);
+
+    // Endpoint 2: with_original_language=yo|ig|ha (Yoruba, Igbo, Hausa cinema)
+    let urlLang = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_original_language=yo|ig|ha&sort_by=${sortBy}&page=${page}&include_adult=false&vote_count.gte=0`;
+    if (dateRange?.gte) urlLang += `&primary_release_date.gte=${dateRange.gte}`;
+    if (dateRange?.lte) urlLang += `&primary_release_date.lte=${dateRange.lte}`;
+    urls.push(urlLang);
+
+    // Endpoint 3: Keyword search fallback for Nollywood titles across page <= 3
+    if (page <= 3) {
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${page}&include_adult=false`);
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian&page=${page}&include_adult=false`);
     }
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to discover Nigerian movies: ${response.status}`);
+    const responses = await Promise.allSettled(urls.map(u => fetch(u)));
+    const allRawItems: any[] = [];
+    let maxTotalPages = 1;
+
+    for (const res of responses) {
+      if (res.status === 'fulfilled' && res.value.ok) {
+        try {
+          const data = await res.value.json();
+          if (data.total_pages && data.total_pages > maxTotalPages) {
+            maxTotalPages = data.total_pages;
+          }
+          if (Array.isArray(data.results)) {
+            allRawItems.push(...data.results);
+          }
+        } catch {}
+      }
     }
 
-    const data = await response.json();
-    const results = data.results || [];
+    // Deduplicate raw items by TMDb integer ID and apply date range filtering if specified
+    const uniqueMap = new Map<number, any>();
+    for (const item of allRawItems) {
+      if (!item || !item.id) continue;
+      if (dateRange?.gte || dateRange?.lte) {
+        const itemDate = item.release_date || '';
+        if (itemDate) {
+          if (dateRange.gte && itemDate < dateRange.gte) continue;
+          if (dateRange.lte && itemDate > dateRange.lte) continue;
+        }
+      }
+      if (!uniqueMap.has(item.id)) {
+        uniqueMap.set(item.id, item);
+      }
+    }
 
-    const candidates = results.map((item: any) => formatTmdbResult(item, item.title || 'Nollywood Film'));
+    const candidates = Array.from(uniqueMap.values()).map((item: any) => 
+      formatTmdbResult(item, item.title || 'Nollywood Film')
+    );
 
     return {
       candidates,
-      totalPages: data.total_pages || 1,
-      totalResults: data.total_results || candidates.length
+      totalPages: maxTotalPages,
+      totalResults: candidates.length
     };
   } catch (error) {
     console.error('Error discovering Nigerian movies from TMDb:', error);
@@ -506,31 +542,42 @@ export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, f
 
   const fullMovie: Movie = {
     id: cleanId,
-    title: candidate.title,
+    title: candidate.title || 'Untitled Nollywood Film',
     nativeTitle: (candidate.originalTitle && candidate.originalTitle !== candidate.title) ? candidate.originalTitle : '',
-    tagline: tagline,
-    releaseYear: candidate.releaseYear,
+    tagline: tagline || '',
+    releaseYear: Number(candidate.releaseYear) || new Date().getFullYear(),
     director: director || 'Nigerian Filmmaker Team',
     directorAvatarUrl: directorAvatarUrl || '',
-    directorTmdbId: directorTmdbId,
-    leadCast: leadCast,
-    genres: genres,
+    directorTmdbId: directorTmdbId !== undefined && directorTmdbId !== null ? Number(directorTmdbId) : undefined,
+    leadCast: Array.isArray(leadCast) ? leadCast.map(c => ({
+      actor: c?.actor || '',
+      role: c?.role || 'Cast Member',
+      avatarUrl: c?.avatarUrl || '',
+      tmdbId: c?.tmdbId !== undefined && c?.tmdbId !== null ? Number(c.tmdbId) : undefined
+    })) : [],
+    genres: genres.length > 0 ? genres : ['Drama'],
     languages: ['English', 'Nigerian Pidgin', 'Yoruba'],
-    era: era,
-    runtimeMinutes: runtime,
-    rating: candidate.rating > 0 ? candidate.rating : 8.0,
-    ratingCount: candidate.ratingCount > 0 ? candidate.ratingCount : 120,
+    era: era || determineEra(candidate.releaseYear),
+    runtimeMinutes: Number(runtime) || 105,
+    rating: typeof candidate.rating === 'number' && candidate.rating > 0 ? candidate.rating : 8.0,
+    ratingCount: Number(candidate.ratingCount) || 120,
     posterUrl: candidate.posterUrl || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=800&auto=format&fit=crop',
     backdropUrl: candidate.backdropUrl || candidate.posterUrl || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop',
     synopsis: candidate.overview || 'A gripping Nollywood production highlighting rich cultural storytelling.',
-    culturalSignificance: `Discovered from TMDb Nollywood Archive (NG). Represents ${era}.`,
-    streamingPlatforms: platforms,
-    trailerYoutubeId: trailerYoutubeId,
+    culturalSignificance: `Discovered from TMDb Nollywood Archive. Represents ${era || determineEra(candidate.releaseYear)}.`,
+    streamingPlatforms: Array.isArray(platforms) ? platforms.map(p => ({
+      name: p?.name || 'Netflix',
+      badgeColor: p?.badgeColor || 'bg-slate-700',
+      url: p?.url || ''
+    })) : [],
+    trailerYoutubeId: trailerYoutubeId || '',
     amvcaAwards: ['Nollywood Cinema Selection'],
+    quote: undefined,
     featured: false,
     boxOfficeChampion: false,
     isUserAdded: true,
-    source: 'web_pulled'
+    source: 'web_pulled',
+    tmdbId: candidate.tmdbId !== undefined && candidate.tmdbId !== null ? Number(candidate.tmdbId) : undefined
   };
 
   setCachedItem(cacheKey, fullMovie, MOVIE_TTL_MS);
@@ -678,32 +725,34 @@ export async function fetchPersonHeadshot(personName: string, tmdbId?: number, f
 }
 
 /**
- * Normalizes movie titles for strict deduplication:
- * Strips punctuation, casing, and common search phrases (e.g. 'Nollywood', 'Nigerian Movie', 'Part 1', 'Full Movie').
+ * Normalizes movie titles for deduplication:
+ * Strips bracketed annotations and metadata markers without destroying core title words.
  */
 export function normalizeTitle(title: string): string {
   if (!title) return '';
   return title
     .toLowerCase()
-    .replace(/\b(nollywood|nigerian|movie|cinema|part\s*\d+|film|hd|official|trailer|full)\b/gi, '')
+    .replace(/[\(\[\{].*?[\)\]\}]/g, '')
+    .replace(/\b(part\s*\d+|vol\s*\d+|season\s*\d+|episode\s*\d+|official|trailer|teaser|hd)\b/gi, '')
     .replace(/[^a-z0-9]/g, '')
     .trim();
 }
 
 /**
- * Strict Duplicate Prevention Check:
+ * Smart Relaxed Duplicate Prevention Check:
  * Compares candidate against existing catalogue using:
  * 1. Exact unique ID match
  * 2. TMDb numerical ID match
- * 3. Normalized title match
+ * 3. Relaxed normalized title match (preserves legitimate remakes/classics if release years differ)
  */
 export function isDuplicateMovie(
-  candidate: { tmdbId?: number; id?: string; title: string },
+  candidate: { tmdbId?: number; id?: string; title: string; releaseYear?: number },
   existingMovies: Movie[]
 ): boolean {
   if (!candidate || !candidate.title) return true;
   const normCandidate = normalizeTitle(candidate.title);
   const candTmdbId = candidate.tmdbId || (candidate.id && candidate.id.startsWith('tmdb-') ? parseInt(candidate.id.replace('tmdb-', ''), 10) : undefined);
+  const candYear = candidate.releaseYear;
 
   return existingMovies.some((m) => {
     // 1. Direct ID match
@@ -711,11 +760,19 @@ export function isDuplicateMovie(
 
     // 2. TMDb integer ID match
     const mTmdbId = (m as any).tmdbId || (m.id.startsWith('tmdb-') ? parseInt(m.id.replace('tmdb-', ''), 10) : undefined);
-    if (candTmdbId && mTmdbId && candTmdbId === mTmdbId) return true;
+    if (candTmdbId && mTmdbId) {
+      if (candTmdbId === mTmdbId) return true;
+      // If TMDb IDs exist and differ, they are verified distinct records on TMDb
+      return false;
+    }
 
-    // 3. Normalized title match
+    // 3. Relaxed normalized title match:
     const normM = normalizeTitle(m.title);
-    if (normCandidate.length > 2 && normM.length > 2 && normCandidate === normM) {
+    if (normCandidate.length >= 3 && normM.length >= 3 && normCandidate === normM) {
+      // If release years differ by 2+ years, they are distinct films (e.g. 1994 classic vs 2022 remake)
+      if (candYear && m.releaseYear && Math.abs(candYear - m.releaseYear) >= 2) {
+        return false;
+      }
       return true;
     }
 
@@ -800,6 +857,31 @@ export interface HistoricalSweepProgress {
  * Strictly deduplicates every movie before pulling details.
  * Emits clean, human-oriented progress telemetry (no internal page numbers displayed).
  */
+const CLASSIC_QUERIES_BY_ERA: Record<string, string[]> = {
+  '1980s Era': ['Aiye', 'Jaiyesimi', 'Kada River', 'Papa Ajasco'],
+  '1990s Era': [
+    'Living in Bondage', 'Glamour Girls', 'Saworoide', 'Nneka The Pretty Serpent', 
+    'Domitilla', 'Hostages', 'Thunderbolt', 'Ti Oluwa Ni Ile', 'Mortal Inheritance', 
+    'Diamond Ring', 'Karishika', 'Scores to Settle', 'Igodo', 'Blood Money', 'Sakobi'
+  ],
+  '2000s Era': [
+    'Osuofia in London', 'Aki na Ukwa', 'Issakaba', 'The Figurine', 'Irapada', 
+    'Dangerous Twins', 'Jenifa', 'Games Men Play', 'Keeping Faith', 'Blood Sister',
+    'Out of Bounds'
+  ],
+  '2010s Era': [
+    'The Wedding Party', 'Fifty', 'October 1', 'Taxi Driver', 
+    'Chief Daddy', 'King of Boys', 'Lionheart', 'Merry Men', 'The Bling Lagosians', 
+    'Isoken', 'Up North'
+  ]
+};
+
+/**
+ * Deep Multi-Decade Historical Bulk Importer:
+ * Scans historical eras (1980s, 1990s, 2000s, 2010s, 2020s) across multiple TMDb endpoints.
+ * Relaxed deduplication preserves valid classics across different eras.
+ * Emits clean, human-oriented progress telemetry (no internal page numbers displayed).
+ */
 export async function runDeepHistoricalSweep(
   existingMovies: Movie[],
   onProgress?: (progress: HistoricalSweepProgress) => void
@@ -812,7 +894,7 @@ export async function runDeepHistoricalSweep(
     { label: '2020s Era', gte: '2020-01-01', lte: '2029-12-31' }
   ];
 
-  const PAGES_PER_ERA = 5;
+  const PAGES_PER_ERA = 4;
   const totalSteps = erasToScan.length * PAGES_PER_ERA;
   let currentStep = 0;
   const pool = [...existingMovies];
@@ -842,35 +924,32 @@ export async function runDeepHistoricalSweep(
           { gte: era.gte, lte: era.lte }
         );
 
-        if (!candidates || candidates.length === 0) {
-          // If no results for this page in this era, proceed to next era
-          break;
-        }
+        if (candidates && candidates.length > 0) {
+          for (const candidate of candidates) {
+            if (!candidate.title) continue;
 
-        for (const candidate of candidates) {
-          if (!candidate.title || !candidate.posterUrl) continue;
-
-          // Strict Deduplication Check
-          if (isDuplicateMovie(candidate, pool)) {
-            continue;
-          }
-
-          try {
-            const fullMovie = await pullMovieDetailsFromOnline(candidate);
-            newImported.push(fullMovie);
-            pool.push(fullMovie);
-
-            if (onProgress) {
-              onProgress({
-                decadeLabel: era.label,
-                importedCount: newImported.length,
-                percent,
-                isComplete: false,
-                statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
-              });
+            // Relaxed Deduplication Check
+            if (isDuplicateMovie(candidate, pool)) {
+              continue;
             }
-          } catch (e) {
-            console.warn(`Could not pull full details for ${candidate.title}`, e);
+
+            try {
+              const fullMovie = await pullMovieDetailsFromOnline(candidate);
+              newImported.push(fullMovie);
+              pool.push(fullMovie);
+
+              if (onProgress) {
+                onProgress({
+                  decadeLabel: era.label,
+                  importedCount: newImported.length,
+                  percent,
+                  isComplete: false,
+                  statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
+                });
+              }
+            } catch (e) {
+              console.warn(`Could not pull full details for ${candidate.title}`, e);
+            }
           }
         }
 
@@ -879,6 +958,34 @@ export async function runDeepHistoricalSweep(
         }
       } catch (err) {
         console.warn(`Error during historical sweep of ${era.label} page ${page}:`, err);
+      }
+    }
+
+    // Targeted era search query fallback to ensure iconic classic Nollywood films are represented
+    const classicTitles = CLASSIC_QUERIES_BY_ERA[era.label] || [];
+    for (const titleQuery of classicTitles) {
+      try {
+        const searchCandidates = await searchMoviesOnline(titleQuery);
+        for (const cand of searchCandidates.slice(0, 2)) {
+          if (!cand.title) continue;
+          if (isDuplicateMovie(cand, pool)) continue;
+
+          const fullMovie = await pullMovieDetailsFromOnline(cand);
+          newImported.push(fullMovie);
+          pool.push(fullMovie);
+
+          if (onProgress) {
+            onProgress({
+              decadeLabel: era.label,
+              importedCount: newImported.length,
+              percent: Math.min(95, Math.round((currentStep / totalSteps) * 100)),
+              isComplete: false,
+              statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Error searching classic query ${titleQuery}:`, err);
       }
     }
   }

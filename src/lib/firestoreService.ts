@@ -1,7 +1,7 @@
 import { 
   collection, doc, getDoc, setDoc, updateDoc, 
   deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, 
-  Timestamp, getDocFromServer 
+  Timestamp, getDocFromServer, writeBatch 
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types';
@@ -89,29 +89,28 @@ export function stripUndefined<T>(obj: T): T {
  */
 export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, any>): Record<string, any> {
   const safeData: Record<string, any> = {
-    ...movie,
     id: movie.id || '',
-    title: movie.title || '',
+    title: movie.title || 'Untitled Nollywood Film',
     nativeTitle: movie.nativeTitle ? String(movie.nativeTitle).trim() : '',
-    tagline: movie.tagline || '',
+    tagline: movie.tagline ? String(movie.tagline).trim() : '',
     releaseYear: Number(movie.releaseYear) || new Date().getFullYear(),
-    director: movie.director || 'Unknown Director',
+    director: movie.director || 'Nigerian Filmmaker Team',
     directorAvatarUrl: movie.directorAvatarUrl || '',
-    directorTmdbId: movie.directorTmdbId !== undefined ? movie.directorTmdbId : null,
+    directorTmdbId: movie.directorTmdbId !== undefined && movie.directorTmdbId !== null ? Number(movie.directorTmdbId) : null,
     producer: movie.producer || '',
     leadCast: Array.isArray(movie.leadCast)
       ? movie.leadCast.map((c) => ({
-          actor: c.actor || '',
-          role: c.role || '',
-          avatarUrl: c.avatarUrl || '',
-          tmdbId: c.tmdbId !== undefined ? c.tmdbId : null
+          actor: c?.actor || '',
+          role: c?.role || 'Cast Member',
+          avatarUrl: c?.avatarUrl || '',
+          tmdbId: c?.tmdbId !== undefined && c?.tmdbId !== null ? Number(c.tmdbId) : null
         }))
       : [],
     genres: Array.isArray(movie.genres) && movie.genres.length > 0 ? movie.genres : ['Drama'],
     languages: Array.isArray(movie.languages) && movie.languages.length > 0 ? movie.languages : ['English'],
     era: movie.era || 'Modern Global Era (2019-Present)',
-    runtimeMinutes: Number(movie.runtimeMinutes) || 100,
-    rating: typeof movie.rating === 'number' ? movie.rating : 8.0,
+    runtimeMinutes: Number(movie.runtimeMinutes) || 105,
+    rating: typeof movie.rating === 'number' && !isNaN(movie.rating) ? movie.rating : 8.0,
     ratingCount: Number(movie.ratingCount) || 1,
     boxOffice: movie.boxOffice || '',
     posterUrl: movie.posterUrl || '',
@@ -120,9 +119,9 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     culturalSignificance: movie.culturalSignificance || '',
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({
-          name: p.name || 'Netflix',
-          badgeColor: p.badgeColor || 'bg-slate-700',
-          url: p.url || ''
+          name: p?.name || 'Netflix',
+          badgeColor: p?.badgeColor || 'bg-slate-700',
+          url: p?.url || ''
         }))
       : [],
     trailerYoutubeId: movie.trailerYoutubeId || '',
@@ -135,7 +134,12 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
         }
       : null,
     featured: Boolean(movie.featured),
-    isUserAdded: true
+    boxOfficeChampion: Boolean(movie.boxOfficeChampion),
+    isUserAdded: true,
+    source: movie.source || 'web_pulled',
+    tmdbId: movie.tmdbId !== undefined && movie.tmdbId !== null ? Number(movie.tmdbId) : null,
+    addedByUserId: movie.addedByUserId || null,
+    lastEditedByUserId: movie.lastEditedByUserId || null
   };
 
   return stripUndefined(safeData);
@@ -402,6 +406,48 @@ export async function saveFirestoreCustomMovie(movie: Movie, userId?: string) {
     handleFirestoreError(err, OperationType.WRITE, `custom_movies/${movie.id}`);
     throw err;
   }
+}
+
+/**
+ * Save multiple movies directly to Firebase Firestore in chunks
+ * Handles batching and provides graceful fallback to ensure imports are always written to Cloud Firestore
+ */
+export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: string): Promise<number> {
+  if (!movies || movies.length === 0) return 0;
+  let savedCount = 0;
+
+  // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
+  const chunkSize = 350;
+  for (let i = 0; i < movies.length; i += chunkSize) {
+    const chunk = movies.slice(i, i + chunkSize);
+    try {
+      const batch = writeBatch(db);
+      for (const movie of chunk) {
+        const movieRef = doc(db, 'custom_movies', movie.id);
+        const preparedPayload = prepareMovieForFirestore({
+          ...movie,
+          addedByUserId: movie.addedByUserId || userId || null,
+          lastEditedByUserId: userId || null
+        });
+        preparedPayload.syncedAt = serverTimestamp();
+        batch.set(movieRef, preparedPayload, { merge: true });
+      }
+      await batch.commit();
+      savedCount += chunk.length;
+    } catch (batchErr) {
+      console.warn('Batch write failed, falling back to sequential writes:', batchErr);
+      for (const movie of chunk) {
+        try {
+          await saveFirestoreCustomMovie(movie, userId);
+          savedCount++;
+        } catch (singleErr) {
+          console.warn(`Failed to save movie ${movie.id} in fallback:`, singleErr);
+        }
+      }
+    }
+  }
+
+  return savedCount;
 }
 
 /**

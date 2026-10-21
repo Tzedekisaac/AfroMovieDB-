@@ -19,6 +19,7 @@ interface StandaloneListViewProps {
   onToggleWatchlist: (movieId: string) => void;
   trackingMap?: Map<string, any>;
   onUpdateStatus?: (movieId: string, status: any) => void;
+  onOpenAuth?: () => void;
 }
 
 export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
@@ -32,7 +33,8 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
   watchlist,
   onToggleWatchlist,
   trackingMap,
-  onUpdateStatus
+  onUpdateStatus,
+  onOpenAuth
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -247,7 +249,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8">
             {listMovies.map((movie) => (
               <MovieCard
                 key={movie.id}
@@ -260,6 +262,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
                 onUpdateStatus={onUpdateStatus}
                 viewMode="grid"
                 currentUser={currentUser}
+                onOpenAuth={onOpenAuth}
               />
             ))}
           </div>

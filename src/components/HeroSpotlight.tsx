@@ -11,6 +11,7 @@ interface HeroSpotlightProps {
   onToggleWatchlist: (movieId: string) => void;
   currentUser?: FirebaseUser | null;
   onOpenEdit?: (movie: Movie) => void;
+  onOpenAuth?: () => void;
 }
 
 export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
@@ -20,7 +21,8 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
   isWatchlisted,
   onToggleWatchlist,
   currentUser,
-  onOpenEdit
+  onOpenEdit,
+  onOpenAuth
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -150,17 +152,23 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
 
             <button
               id="hero-toggle-watchlist-btn"
-              onClick={() => onToggleWatchlist(currentMovie.id)}
-              className={`flex items-center gap-2 p-2.5 sm:px-4 sm:py-2.5 rounded-full border text-sm font-medium transition-all ${
-                inWatchlist
+              onClick={() => {
+                if (!currentUser) {
+                  if (onOpenAuth) onOpenAuth();
+                } else {
+                  onToggleWatchlist(currentMovie.id);
+                }
+              }}
+              className={`flex items-center gap-2 p-2.5 sm:px-4 sm:py-2.5 rounded-full border text-sm font-medium transition-all cursor-pointer ${
+                currentUser && inWatchlist
                   ? 'bg-amber-500/20 border-amber-500 text-amber-300'
                   : 'bg-slate-900/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
               }`}
-              title={inWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist'}
+              title={!currentUser ? 'Sign in to add to Watchlist' : inWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist'}
             >
-              <Bookmark className={`w-4 h-4 ${inWatchlist ? 'fill-amber-400 text-amber-400' : ''}`} />
+              <Bookmark className={`w-4 h-4 ${currentUser && inWatchlist ? 'fill-amber-400 text-amber-400' : ''}`} />
               <span className="hidden sm:inline">
-                {inWatchlist ? 'Saved' : 'Watchlist'}
+                {currentUser && inWatchlist ? 'Saved' : 'Watchlist'}
               </span>
             </button>
           </div>
