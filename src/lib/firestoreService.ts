@@ -393,13 +393,9 @@ export function subscribeToCustomMovies(callback: (movies: Movie[]) => void) {
 /**
  * Save new or modified movie directly to Firebase Firestore
  */
-export async function saveFirestoreCustomMovie(movie: Movie, userId?: string) {
-  if (!auth.currentUser) {
-    // Unauthenticated visitors store movies in local storage only
-    return movie;
-  }
+export async function saveFirestoreCustomMovie(movie: Movie, userId?: string): Promise<Movie> {
   const movieRef = doc(db, 'custom_movies', movie.id);
-  const currentUid = userId || auth.currentUser.uid;
+  const currentUid = userId || auth.currentUser?.uid || 'community-contributor';
   try {
     const preparedPayload = prepareMovieForFirestore({
       ...movie,
@@ -418,13 +414,13 @@ export async function saveFirestoreCustomMovie(movie: Movie, userId?: string) {
 }
 
 /**
- * Save multiple movies directly to Firebase Firestore in chunks
- * Handles batching and provides graceful fallback to ensure imports are always written to Cloud Firestore
+ * Save multiple movies directly to Firebase Firestore in real-time batches
+ * Handles batching (chunks of 350) and provides immediate global propagation via Firestore onSnapshot
  */
 export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: string): Promise<number> {
-  if (!movies || movies.length === 0 || !auth.currentUser) return 0;
+  if (!movies || movies.length === 0) return 0;
   let savedCount = 0;
-  const currentUid = userId || auth.currentUser.uid;
+  const currentUid = userId || auth.currentUser?.uid || 'community-sync';
 
   // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
   const chunkSize = 350;
@@ -464,10 +460,7 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
  * Update an existing movie directly in Firebase Firestore with user identity & timestamp
  */
 export async function updateFirestoreMovie(movie: Movie, userId?: string): Promise<Movie> {
-  if (!auth.currentUser) {
-    return movie;
-  }
-  const currentUid = userId || auth.currentUser.uid;
+  const currentUid = userId || auth.currentUser?.uid || 'community-editor';
   const movieRef = doc(db, 'custom_movies', movie.id);
   try {
     const preparedPayload = prepareMovieForFirestore({

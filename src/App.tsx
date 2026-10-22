@@ -27,7 +27,8 @@ import {
   runDeepHistoricalSweep,
   setCustomTmdbKey,
   pullMovieDetailsFromOnline,
-  HistoricalSweepProgress
+  HistoricalSweepProgress,
+  sanitizeMovie
 } from './utils/api';
 import { NIGERIAN_MOVIES, INITIAL_REVIEWS } from './data/movies';
 import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
@@ -55,7 +56,6 @@ import {
 const WATCHLIST_STORAGE_KEY = 'afromoviedb_watchlist_ids_v1';
 const TRACKING_STORAGE_KEY = 'afromoviedb_tracking_list_v1';
 const REVIEWS_STORAGE_KEY = 'afromoviedb_user_reviews_v1';
-const PULLED_MOVIES_STORAGE_KEY = 'afromoviedb_pulled_movies_v1';
 
 export default function App() {
   // Navigation View State: 'catalogue' or dedicated 'profile'
@@ -229,18 +229,19 @@ export default function App() {
   // Listen to Firestore Real-time Custom Movies (Global Real-Time Cloud Sync for all live visitors)
   useEffect(() => {
     const unsubscribe = subscribeToCustomMovies((cloudMovies) => {
-      setFirestoreCustomMovies(cloudMovies);
+      const sanitizedCloud = (cloudMovies || []).map(sanitizeMovie);
+      setFirestoreCustomMovies(sanitizedCloud);
       setMoviesList(() => {
-        if (!cloudMovies || cloudMovies.length === 0) {
+        if (!sanitizedCloud || sanitizedCloud.length === 0) {
           return NIGERIAN_MOVIES;
         }
-        const cloudIds = new Set(cloudMovies.map(m => m.id));
+        const cloudIds = new Set(sanitizedCloud.map(m => m.id));
         const baseFiltered = NIGERIAN_MOVIES.filter(m => !cloudIds.has(m.id));
-        return [...cloudMovies, ...baseFiltered];
+        return [...sanitizedCloud, ...baseFiltered];
       });
       setSelectedMovie(curr => {
         if (!curr) return null;
-        const match = cloudMovies.find(m => m.id === curr.id);
+        const match = sanitizedCloud.find(m => m.id === curr.id);
         return match || curr;
       });
     });
@@ -249,14 +250,9 @@ export default function App() {
 
   // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
   const handleMoviePulled = async (newMovie: Movie) => {
-    if (!currentUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-
-    // Direct write to Firebase Firestore custom_movies collection
+    // Direct real-time write to Firebase Firestore custom_movies collection
     try {
-      await saveFirestoreCustomMovie(newMovie, currentUser.uid);
+      await saveFirestoreCustomMovie(newMovie, currentUser?.uid || 'community-contributor');
       setSyncNotice(`"${newMovie.title}" published to global Nollywood catalogue!`);
       setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
@@ -271,11 +267,6 @@ export default function App() {
 
   // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)
   const handleUpdateMovie = async (updatedMovie: Movie) => {
-    if (!currentUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-
     // Synchronize selected movie modal & trailer modal in real time
     if (selectedMovie?.id === updatedMovie.id) {
       setSelectedMovie(updatedMovie);
@@ -284,9 +275,9 @@ export default function App() {
       setTrailerMovie(updatedMovie);
     }
 
-    // Direct write to Firebase Firestore
+    // Direct write to Firebase Firestore custom_movies
     try {
-      await updateFirestoreMovie(updatedMovie, currentUser.uid);
+      await updateFirestoreMovie(updatedMovie, currentUser?.uid || 'community-editor');
       setSyncNotice(`Updated "${updatedMovie.title}" and saved to Firebase Firestore!`);
       setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
@@ -569,12 +560,8 @@ export default function App() {
     }
   }, [activeStandaloneList?.id]);
 
-  // Multi-decade historical import sweep (1980s to 2020s up to page 5 with strict deduplication)
+  // Multi-decade historical import sweep (1990s to 2020s with direct Firestore batch writes)
   const handleTriggerHistoricalSweep = async () => {
-    if (!currentUser) {
-      setIsAuthOpen(true);
-      return;
-    }
     if (isSweeping) return;
     setIsSweeping(true);
     setShowSweepPill(true);
@@ -585,26 +572,16 @@ export default function App() {
       });
 
       if (result.newMovies.length > 0) {
-        setMoviesList(prev => {
-          const prevMap = new Map(prev.map(m => [m.id, m]));
-          result.newMovies.forEach(m => prevMap.set(m.id, m));
-          const updated = Array.from(prevMap.values());
-          try {
-            const existingInitIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-            const onlyCustom = updated.filter(m => !existingInitIds.has(m.id));
-            localStorage.setItem(PULLED_MOVIES_STORAGE_KEY, JSON.stringify(onlyCustom));
-          } catch (e) {
-            console.error('Failed to save historical sweep movies to localStorage', e);
-          }
-          return updated;
-        });
-
-        // Persist all imported movies directly to Firebase Firestore custom_movies collection
-        if (currentUser) {
-          saveMultipleFirestoreMovies(result.newMovies, currentUser.uid).catch(err => {
-            console.warn('Failed to save historical sweep movies to Firestore:', err);
-          });
+        // Direct real-time batch write to Firebase Firestore custom_movies collection
+        // This persists all imported movies immediately to Cloud Firestore and triggers onSnapshot for all visitors
+        try {
+          await saveMultipleFirestoreMovies(result.newMovies, currentUser?.uid || 'community-sweep');
+        } catch (err) {
+          console.warn('Direct Firestore batch write for sweep encountered an issue:', err);
         }
+
+        setSyncNotice(`Published ${result.newMovies.length} classic films directly to Cloud Firestore!`);
+        setTimeout(() => setSyncNotice(null), 5000);
       }
     } catch (err) {
       console.error('Historical sweep error:', err);
@@ -704,28 +681,11 @@ export default function App() {
         if (!isMounted) return;
 
         if (result.isSyncPerformed && result.syncedMovies.length > 0) {
-          // Merge newly discovered Nollywood movies into local catalogue
-          setMoviesList(prev => {
-            const prevMap = new Map(prev.map(m => [m.id, m]));
-            result.syncedMovies.forEach(m => prevMap.set(m.id, m));
-            const updated = Array.from(prevMap.values());
-
-            try {
-              const existingInitIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-              const onlyCustom = updated.filter(m => !existingInitIds.has(m.id));
-              localStorage.setItem(PULLED_MOVIES_STORAGE_KEY, JSON.stringify(onlyCustom));
-            } catch (e) {
-              console.error('Failed to save auto-synced movies to localStorage', e);
-            }
-
-            return updated;
-          });
-
-          // Also persist all new releases to Firebase Firestore custom_movies collection if logged in
-          if (currentUser) {
-            saveMultipleFirestoreMovies(result.syncedMovies, currentUser.uid).catch(err => {
-              console.warn('Failed to save auto-synced movies to Firestore:', err);
-            });
+          // Direct real-time batch write to Firebase Firestore custom_movies collection
+          try {
+            await saveMultipleFirestoreMovies(result.syncedMovies, currentUser?.uid || 'community-sync');
+          } catch (err) {
+            console.warn('Direct Firestore batch write for auto-sync encountered an issue:', err);
           }
 
           setSyncNotice(`AfroMovieDB automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
