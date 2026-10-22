@@ -1,9 +1,11 @@
 import { Movie, Era, StreamingPlatform, CastMember, PersonProfileData, UserTrackedItem, RecommendationItem } from '../types';
 import { saveMultipleFirestoreMovies } from '../lib/firestoreService';
+import { normalizeMovieCollections } from './movieCollections';
 
 export const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
 export const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 export const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
+const TMDB_RESULT_PAGE_LIMIT = 20;
 
 // In-memory reference for the logged-in user's custom TMDb API key
 let userCustomTmdbApiKey: string | null = null;
@@ -432,6 +434,7 @@ export function sanitizeMovie(movie: any): Movie {
       synopsis: 'A captivating Nollywood cinematic story celebrating Nigerian film culture.',
       culturalSignificance: 'Celebrated Nigerian film reflecting rich cultural narratives.',
       streamingPlatforms: [{ name: 'YouTube', badgeColor: 'bg-red-500', url: 'https://www.youtube.com' }],
+      collections: normalizeMovieCollections([]),
       trailerYoutubeId: '',
       amvcaAwards: ['Nollywood Cinema Selection'],
       featured: false,
@@ -619,6 +622,7 @@ export function sanitizeMovie(movie: any): Movie {
   const amvcaAwards = Array.isArray(movie.amvcaAwards)
     ? movie.amvcaAwards.map((a: any) => String(a || '').trim()).filter(Boolean)
     : ['Nollywood Cinema Selection'];
+  const collections = normalizeMovieCollections(movie.collections);
 
   return {
     id,
@@ -643,6 +647,7 @@ export function sanitizeMovie(movie: any): Movie {
     synopsis,
     culturalSignificance,
     streamingPlatforms,
+    collections,
     trailerYoutubeId,
     amvcaAwards,
     quote: movie.quote && typeof movie.quote === 'object' && movie.quote.text
@@ -676,50 +681,54 @@ export async function discoverNigerianMovies(
 ): Promise<{ candidates: WebMovieCandidate[]; totalPages: number; totalResults: number }> {
   try {
     const apiKey = getActiveTmdbApiKey();
+    const requestedPage = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(page) || 1));
     const urls: string[] = [];
 
     // Endpoint 1: with_origin_country=NG with primary_release_date
-    let urlOrigin = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=${sortBy}&page=${page}&include_adult=false`;
+    let urlOrigin = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlOrigin += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlOrigin += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlOrigin);
 
     // Endpoint 2: with_origin_country=NG with release_date (catches Nigerian theatrical/home release dates)
     if (dateRange?.gte || dateRange?.lte) {
-      let urlRelease = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=${sortBy}&page=${page}&include_adult=false`;
+      let urlRelease = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
       if (dateRange?.gte) urlRelease += `&release_date.gte=${dateRange.gte}`;
       if (dateRange?.lte) urlRelease += `&release_date.lte=${dateRange.lte}`;
       urls.push(urlRelease);
     }
 
     // Endpoint 3: Indigenous language Nollywood cinema (Yoruba, Igbo, Hausa, Nigerian Pidgin)
-    let urlLang = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_original_language=yo|ig|ha|pcm&sort_by=${sortBy}&page=${page}&include_adult=false`;
+    let urlLang = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_original_language=yo|ig|ha|pcm&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlLang += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlLang += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlLang);
 
     // Endpoint 4: TMDb Nollywood keyword tags (207317: Nollywood, 263548: Nigerian Cinema)
-    let urlKeyword = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_keywords=207317|263548&sort_by=${sortBy}&page=${page}&include_adult=false`;
+    let urlKeyword = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_keywords=207317|263548&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlKeyword += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlKeyword += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlKeyword);
 
     // Endpoint 5: Multi-page search query fallbacks for Nollywood and Nigerian cinema
-    if (page <= 5 && !dateRange) {
-      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${page}&include_adult=false`);
-      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${page}&include_adult=false`);
+    if (requestedPage <= 5 && !dateRange) {
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${requestedPage}&include_adult=false`);
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false`);
     }
 
     const responses = await Promise.allSettled(urls.map(u => safeTmdbFetch(u)));
     const allRawItems: any[] = [];
-    let maxTotalPages = 20;
+    let maxTotalPages = 1;
 
     for (const res of responses) {
       if (res.status === 'fulfilled' && res.value && res.value.ok) {
         try {
           const data = await res.value.json();
-          if (data.total_pages && data.total_pages > 0) {
-            maxTotalPages = Math.min(Math.max(maxTotalPages, data.total_pages), 20);
+          if (typeof data.total_pages === 'number' && data.total_pages > 0) {
+            maxTotalPages = Math.max(
+              maxTotalPages,
+              Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(data.total_pages))
+            );
           }
           if (Array.isArray(data.results)) {
             allRawItems.push(...data.results);
@@ -951,6 +960,7 @@ export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, f
     synopsis: cleanCand.overview || 'A gripping Nollywood production highlighting rich cultural storytelling.',
     culturalSignificance: `Discovered from TMDb Nollywood Archive. Represents ${era || determineEra(cleanCand.releaseYear)}.`,
     streamingPlatforms: platforms,
+    collections: normalizeMovieCollections([]),
     trailerYoutubeId: trailerYoutubeId || '',
     amvcaAwards: ['Nollywood Cinema Selection'],
     featured: false,
@@ -1304,7 +1314,7 @@ const CLASSIC_QUERIES_BY_ERA: Record<string, string[]> = {
 
 /**
  * Deep Multi-Decade Historical Bulk Importer:
- * Queries 10–20 pages deep across historical eras:
+ * Queries up to 20 pages deep across historical eras:
  * 1990s Era, 2000s Era, 2010s Era, 2020s Era (and 1980s roots)
  * using broad Nigerian origin parameters (with_origin_country=NG, language tags, keyword fallbacks).
  * Directly commits all imported movies via real-time batch writes to Firebase Firestore (custom_movies collection).
@@ -1312,10 +1322,11 @@ const CLASSIC_QUERIES_BY_ERA: Record<string, string[]> = {
 export async function runDeepHistoricalSweep(
   existingMovies: Movie[],
   onProgress?: (progress: HistoricalSweepProgress) => void,
-  pagesPerEra: number = 15
+  pagesPerEra: number = 20
 ): Promise<{ newMovies: Movie[]; summary: string }> {
-  // Constrain pagesPerEra safely between 10 and 20
-  const effectivePagesPerEra = Math.max(10, Math.min(20, pagesPerEra));
+  // Scan up to 20 result pages for each decade, respecting the available page count.
+  const requestedPages = Number.isFinite(pagesPerEra) ? Math.floor(pagesPerEra) : 20;
+  const effectivePagesPerEra = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, requestedPages));
 
   const erasToScan = [
     { label: '1990s Era', gte: '1990-01-01', lte: '1999-12-31' },

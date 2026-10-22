@@ -6,6 +6,7 @@ import {
   Tv, Clapperboard, Trash2 
 } from 'lucide-react';
 import { Movie, Genre, Era, StreamingPlatform, CastMember } from '../types';
+import { normalizeMovieCollections } from '../utils/movieCollections';
 import { 
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
@@ -157,6 +158,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
       backdropUrl: manualBackdropUrl.trim() || manualPosterUrl.trim() || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop',
       synopsis: manualSynopsis.trim() || 'A compelling new addition to the Nigerian cinema landscape.',
       culturalSignificance: `User-curated addition to NaijaReel celebrating Nigerian storytelling.`,
+      collections: normalizeMovieCollections([]),
       streamingPlatforms: [
         { name: manualPlatform, badgeColor: platformBadge, url: 'https://google.com' }
       ],

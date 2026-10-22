@@ -32,6 +32,7 @@ import {
 } from './utils/api';
 import { NIGERIAN_MOVIES, INITIAL_REVIEWS } from './data/movies';
 import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
+import { normalizeMovieCollections } from './utils/movieCollections';
 import { Navbar } from './components/Navbar';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { CatalogueFilters } from './components/CatalogueFilters';
@@ -250,19 +251,23 @@ export default function App() {
 
   // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
   const handleMoviePulled = async (newMovie: Movie) => {
+    const movieWithDefaultCollection: Movie = {
+      ...newMovie,
+      collections: normalizeMovieCollections(newMovie.collections)
+    };
     // Direct real-time write to Firebase Firestore custom_movies collection
     try {
-      await saveFirestoreCustomMovie(newMovie, currentUser?.uid || 'community-contributor');
-      setSyncNotice(`"${newMovie.title}" published to global Nollywood catalogue!`);
+      await saveFirestoreCustomMovie(movieWithDefaultCollection, currentUser?.uid || 'community-contributor');
+      setSyncNotice(`"${movieWithDefaultCollection.title}" published to global Nollywood catalogue!`);
       setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
       console.error('Could not sync movie to Firestore:', err);
-      setSyncNotice(`Failed to publish "${newMovie.title}" to Firestore.`);
+      setSyncNotice(`Failed to publish "${movieWithDefaultCollection.title}" to Firestore.`);
       setTimeout(() => setSyncNotice(null), 4500);
     }
 
     // Auto select the new movie to show details
-    setSelectedMovie(newMovie);
+    setSelectedMovie(movieWithDefaultCollection);
   };
 
   // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)

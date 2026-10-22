@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types';
+import { normalizeMovieCollections } from '../utils/movieCollections';
 
 export enum OperationType {
   CREATE = 'create',
@@ -84,6 +85,31 @@ export function stripUndefined<T>(obj: T): T {
 }
 
 /**
+ * Replaces undefined values throughout a movie payload with null while preserving
+ * Firestore special values such as Timestamp and FieldValue instances.
+ */
+function replaceUndefinedWithNull<T>(value: T): T {
+  if (value === undefined) {
+    return null as T;
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceUndefinedWithNull(item)) as T;
+  }
+  if (value.constructor && value.constructor.name !== 'Object') {
+    return value;
+  }
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value as Record<string, any>)) {
+    cleaned[key] = replaceUndefinedWithNull(child);
+  }
+  return cleaned as T;
+}
+
+/**
  * Prepares movie data safely for Firestore by providing safe fallbacks for optional or missing fields
  * (like nativeTitle, directorAvatarUrl, trailerYoutubeId, boxOffice, quote, etc.) and stripping any undefined values.
  */
@@ -117,6 +143,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     backdropUrl: movie.backdropUrl || movie.posterUrl || '',
     synopsis: movie.synopsis || '',
     culturalSignificance: movie.culturalSignificance || '',
+    collections: normalizeMovieCollections(movie.collections),
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({
           name: p?.name || 'Netflix',
@@ -142,7 +169,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     lastEditedByUserId: movie.lastEditedByUserId || null
   };
 
-  return stripUndefined(safeData);
+  return replaceUndefinedWithNull(safeData);
 }
 
 // Test connection on boot per Firebase guidelines
