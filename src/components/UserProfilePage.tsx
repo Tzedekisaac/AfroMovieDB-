@@ -35,7 +35,6 @@ interface UserProfilePageProps {
   onSelectMovie: (movie: Movie) => void;
   onOpenTrailer: (movie: Movie) => void;
   onDeleteReview: (reviewId: string) => Promise<void> | void;
-  onDeleteCustomMovie?: (movieId: string) => Promise<void> | void;
   onOpenAddMovie: () => void;
   onOpenAuth: () => void;
   onSignOut: () => void;
@@ -79,7 +78,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onSelectMovie,
   onOpenTrailer,
   onDeleteReview,
-  onDeleteCustomMovie,
   onOpenAddMovie,
   onOpenAuth,
   onSignOut,
@@ -90,7 +88,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [searchFilter, setSearchFilter] = useState('');
   const [copiedUid, setCopiedUid] = useState(false);
   const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
-  const [deletingMovieId, setDeletingMovieId] = useState<string | null>(null);
 
   // API Key Form State
   const [inputApiKey, setInputApiKey] = useState(customTmdbApiKey || '');
@@ -278,16 +275,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     }
   };
 
-  const handleDeleteMovieClick = async (movieId: string) => {
-    if (onDeleteCustomMovie && confirm('Are you sure you want to remove this movie entry from the AfroMovieDB catalog?')) {
-      setDeletingMovieId(movieId);
-      try {
-        await onDeleteCustomMovie(movieId);
-      } finally {
-        setDeletingMovieId(null);
-      }
-    }
-  };
 
   // Test TMDb API Key connection
   const handleTestKey = async () => {
@@ -1479,16 +1466,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     >
                       View Details
                     </button>
-                    {onDeleteCustomMovie && (
-                      <button
-                        onClick={() => handleDeleteMovieClick(movie.id)}
-                        disabled={deletingMovieId === movie.id}
-                        className="p-1 rounded text-slate-400 hover:text-red-400 transition-colors"
-                        title="Delete movie"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 </div>
               ))}

@@ -132,19 +132,29 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action buttons */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-            {/* Add Movie / Auto-Pull Trigger (Authenticated Users Only) */}
-            {currentUser && (
-              <button
-                id="open-autopull-btn"
-                onClick={onOpenAutoPull}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full ${activeTheme === 'obsidian' ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white' : activeTheme === 'gold' ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950' : 'bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950'} hover:brightness-110 shadow-md hover:scale-102 active:scale-95 transition-all cursor-pointer`}
-                title="Add Movie or Auto-Pull from Web"
-              >
-                <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                <span className="hidden sm:inline">Add Film</span>
-                <span className="sm:hidden">Add</span>
-              </button>
-            )}
+            {/* Add Movie / Auto-Pull Trigger (Auth-Gated with prompt for guests) */}
+            <button
+              id="open-autopull-btn"
+              onClick={() => {
+                if (!currentUser) {
+                  onOpenAuth();
+                } else {
+                  onOpenAutoPull();
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full ${
+                activeTheme === 'obsidian' 
+                  ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white' 
+                  : activeTheme === 'gold' 
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950' 
+                    : 'bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950'
+              } hover:brightness-110 shadow-md hover:scale-102 active:scale-95 transition-all cursor-pointer`}
+              title={currentUser ? "Add Movie or Auto-Pull from Web" : "Sign in to add a Nollywood movie"}
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <span className="hidden sm:inline">Add Film</span>
+              <span className="sm:hidden">Add</span>
+            </button>
 
             {/* Box Office Highlight Shortcut */}
             <button

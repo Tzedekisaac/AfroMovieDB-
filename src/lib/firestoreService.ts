@@ -333,6 +333,9 @@ export function subscribeToReviews(callback: (reviews: UserReview[]) => void) {
 }
 
 export async function addFirestoreReview(review: Omit<UserReview, 'id' | 'createdAt'> & { userId?: string; userEmail?: string }) {
+  if (!auth.currentUser) {
+    return 'local-rev-' + Date.now();
+  }
   const reviewsCol = collection(db, 'reviews');
   const newDocRef = doc(reviewsCol);
   try {
@@ -342,8 +345,8 @@ export async function addFirestoreReview(review: Omit<UserReview, 'id' | 'create
       rating: typeof review.rating === 'number' ? review.rating : 10,
       comment: review.comment || '',
       userLocation: review.userLocation || 'Nigeria',
-      userId: review.userId || null,
-      userEmail: review.userEmail || null,
+      userId: review.userId || auth.currentUser.uid,
+      userEmail: review.userEmail || auth.currentUser.email || null,
       createdAt: serverTimestamp()
     });
     await setDoc(newDocRef, payload);
@@ -355,6 +358,7 @@ export async function addFirestoreReview(review: Omit<UserReview, 'id' | 'create
 }
 
 export async function deleteFirestoreReview(reviewId: string) {
+  if (!auth.currentUser) return;
   const reviewRef = doc(db, 'reviews', reviewId);
   try {
     await deleteDoc(reviewRef);
@@ -390,12 +394,17 @@ export function subscribeToCustomMovies(callback: (movies: Movie[]) => void) {
  * Save new or modified movie directly to Firebase Firestore
  */
 export async function saveFirestoreCustomMovie(movie: Movie, userId?: string) {
+  if (!auth.currentUser) {
+    // Unauthenticated visitors store movies in local storage only
+    return movie;
+  }
   const movieRef = doc(db, 'custom_movies', movie.id);
+  const currentUid = userId || auth.currentUser.uid;
   try {
     const preparedPayload = prepareMovieForFirestore({
       ...movie,
-      addedByUserId: movie.addedByUserId || userId || null,
-      lastEditedByUserId: userId || null
+      addedByUserId: movie.addedByUserId || currentUid,
+      lastEditedByUserId: currentUid
     });
     // Add server timestamp after cleaning
     preparedPayload.syncedAt = serverTimestamp();
@@ -413,8 +422,9 @@ export async function saveFirestoreCustomMovie(movie: Movie, userId?: string) {
  * Handles batching and provides graceful fallback to ensure imports are always written to Cloud Firestore
  */
 export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: string): Promise<number> {
-  if (!movies || movies.length === 0) return 0;
+  if (!movies || movies.length === 0 || !auth.currentUser) return 0;
   let savedCount = 0;
+  const currentUid = userId || auth.currentUser.uid;
 
   // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
   const chunkSize = 350;
@@ -426,8 +436,8 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
         const movieRef = doc(db, 'custom_movies', movie.id);
         const preparedPayload = prepareMovieForFirestore({
           ...movie,
-          addedByUserId: movie.addedByUserId || userId || null,
-          lastEditedByUserId: userId || null
+          addedByUserId: movie.addedByUserId || currentUid,
+          lastEditedByUserId: currentUid
         });
         preparedPayload.syncedAt = serverTimestamp();
         batch.set(movieRef, preparedPayload, { merge: true });
@@ -438,7 +448,7 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
       console.warn('Batch write failed, falling back to sequential writes:', batchErr);
       for (const movie of chunk) {
         try {
-          await saveFirestoreCustomMovie(movie, userId);
+          await saveFirestoreCustomMovie(movie, currentUid);
           savedCount++;
         } catch (singleErr) {
           console.warn(`Failed to save movie ${movie.id} in fallback:`, singleErr);
@@ -454,11 +464,15 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
  * Update an existing movie directly in Firebase Firestore with user identity & timestamp
  */
 export async function updateFirestoreMovie(movie: Movie, userId?: string): Promise<Movie> {
+  if (!auth.currentUser) {
+    return movie;
+  }
+  const currentUid = userId || auth.currentUser.uid;
   const movieRef = doc(db, 'custom_movies', movie.id);
   try {
     const preparedPayload = prepareMovieForFirestore({
       ...movie,
-      lastEditedByUserId: userId || null,
+      lastEditedByUserId: currentUid,
       isUserAdded: true // Ensure movie is preserved across catalog sessions
     });
     // Add server timestamp
@@ -472,14 +486,9 @@ export async function updateFirestoreMovie(movie: Movie, userId?: string): Promi
   }
 }
 
-export async function deleteFirestoreCustomMovie(movieId: string) {
-  const movieRef = doc(db, 'custom_movies', movieId);
-  try {
-    await deleteDoc(movieRef);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `custom_movies/${movieId}`);
-    throw err;
-  }
+export async function deleteFirestoreCustomMovie(movieId: string): Promise<void> {
+  console.warn(`Movie deletion is disabled. The catalogue operates strictly in Add-Only Mode. Cannot delete movie: ${movieId}`);
+  throw new Error('Movie deletion is disabled. The AfroMovieDB registry operates strictly in Add-Only Mode.');
 }
 
 /**
@@ -571,6 +580,7 @@ export async function getCustomListById(listId: string): Promise<CustomUserList 
 }
 
 export async function saveCustomList(list: CustomUserList, userId: string): Promise<void> {
+  if (!auth.currentUser) return;
   const docRef = doc(db, 'custom_lists', list.id);
   try {
     const payload = stripUndefined({
@@ -595,6 +605,7 @@ export async function saveCustomList(list: CustomUserList, userId: string): Prom
 }
 
 export async function deleteCustomList(listId: string): Promise<void> {
+  if (!auth.currentUser) return;
   const docRef = doc(db, 'custom_lists', listId);
   try {
     await deleteDoc(docRef);

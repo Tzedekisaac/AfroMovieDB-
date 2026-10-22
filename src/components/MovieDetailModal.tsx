@@ -162,6 +162,10 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   const handleSubmitReview = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
     if (!userName.trim() || !userComment.trim()) return;
 
     onAddReview({
@@ -170,8 +174,8 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
       rating: userRating,
       comment: userComment.trim(),
       userLocation: userLocation.trim() || 'Nigeria',
-      userId: currentUser?.uid,
-      userEmail: currentUser?.email || undefined
+      userId: currentUser.uid,
+      userEmail: currentUser.email || undefined
     });
 
     setUserComment('');

@@ -19,7 +19,6 @@ import {
   subscribeToCustomMovies, 
   saveFirestoreCustomMovie, 
   saveMultipleFirestoreMovies,
-  deleteFirestoreCustomMovie,
   updateFirestoreMovie 
 } from './lib/firestoreService';
 import { 
@@ -73,21 +72,8 @@ export default function App() {
   const [isSyncingReleases, setIsSyncingReleases] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
-  // Master Movies list state (Initial catalogue + user pulled movies from localStorage & Firestore)
-  const [moviesList, setMoviesList] = useState<Movie[]>(() => {
-    try {
-      const saved = localStorage.getItem(PULLED_MOVIES_STORAGE_KEY) || localStorage.getItem('naijareel_pulled_movies_v1');
-      if (saved) {
-        const parsed: Movie[] = JSON.parse(saved);
-        const existingIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-        const custom = parsed.filter(m => !existingIds.has(m.id));
-        return [...custom, ...NIGERIAN_MOVIES];
-      }
-    } catch (e) {
-      console.error('Failed to load pulled movies', e);
-    }
-    return NIGERIAN_MOVIES;
-  });
+  // Master Movies list state (Initial catalogue + real-time Firestore custom_movies onSnapshot sync)
+  const [moviesList, setMoviesList] = useState<Movie[]>(NIGERIAN_MOVIES);
 
   // Filters State
   const [filterState, setFilterState] = useState<FilterState>({
@@ -240,99 +226,57 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore Real-time Custom Movies
+  // Listen to Firestore Real-time Custom Movies (Global Real-Time Cloud Sync for all live visitors)
   useEffect(() => {
     const unsubscribe = subscribeToCustomMovies((cloudMovies) => {
       setFirestoreCustomMovies(cloudMovies);
-      if (cloudMovies.length > 0) {
-        setMoviesList(prev => {
-          const cloudIds = new Set(cloudMovies.map(m => m.id));
-          const localOnly = prev.filter(m => !cloudIds.has(m.id));
-          return [...cloudMovies, ...localOnly];
-        });
-        setSelectedMovie(curr => {
-          if (!curr) return null;
-          const match = cloudMovies.find(m => m.id === curr.id);
-          return match || curr;
-        });
-      }
+      setMoviesList(() => {
+        if (!cloudMovies || cloudMovies.length === 0) {
+          return NIGERIAN_MOVIES;
+        }
+        const cloudIds = new Set(cloudMovies.map(m => m.id));
+        const baseFiltered = NIGERIAN_MOVIES.filter(m => !cloudIds.has(m.id));
+        return [...cloudMovies, ...baseFiltered];
+      });
+      setSelectedMovie(curr => {
+        if (!curr) return null;
+        const match = cloudMovies.find(m => m.id === curr.id);
+        return match || curr;
+      });
     });
     return () => unsubscribe();
   }, []);
 
-  // Add auto-pulled or manually created movie handler
+  // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
   const handleMoviePulled = async (newMovie: Movie) => {
-    // 1. Update local state
-    setMoviesList(prev => {
-      const filtered = prev.filter(m => m.id !== newMovie.id);
-      const updated = [newMovie, ...filtered];
-      try {
-        const existingInitIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-        const onlyCustom = updated.filter(m => !existingInitIds.has(m.id));
-        localStorage.setItem(PULLED_MOVIES_STORAGE_KEY, JSON.stringify(onlyCustom));
-      } catch (e) {
-        console.error('Failed to save pulled movie', e);
-      }
-      return updated;
-    });
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
 
-    // 2. Sync to Firebase Firestore
+    // Direct write to Firebase Firestore custom_movies collection
     try {
-      await saveFirestoreCustomMovie(newMovie, currentUser?.uid);
+      await saveFirestoreCustomMovie(newMovie, currentUser.uid);
+      setSyncNotice(`"${newMovie.title}" published to global Nollywood catalogue!`);
+      setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
-      console.warn('Could not sync movie to Firestore (saved locally):', err);
+      console.error('Could not sync movie to Firestore:', err);
+      setSyncNotice(`Failed to publish "${newMovie.title}" to Firestore.`);
+      setTimeout(() => setSyncNotice(null), 4500);
     }
 
     // Auto select the new movie to show details
     setSelectedMovie(newMovie);
   };
 
-  // Delete user-added movie handler
-  const handleDeleteMovie = async (movieId: string) => {
-    setMoviesList(prev => {
-      const updated = prev.filter(m => m.id !== movieId);
-      try {
-        const existingInitIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-        const onlyCustom = updated.filter(m => !existingInitIds.has(m.id));
-        localStorage.setItem(PULLED_MOVIES_STORAGE_KEY, JSON.stringify(onlyCustom));
-      } catch (e) {
-        console.error('Failed to save updated movie list', e);
-      }
-      return updated;
-    });
-
-    // Remove from Firestore
-    try {
-      await deleteFirestoreCustomMovie(movieId);
-    } catch (err) {
-      console.warn('Failed to delete movie from Firestore:', err);
-    }
-
-    if (selectedMovie?.id === movieId) {
-      setSelectedMovie(null);
-    }
-  };
-
   // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)
   const handleUpdateMovie = async (updatedMovie: Movie) => {
-    // 1. Immediate optimistic UI updates
-    setMoviesList(prev => {
-      const exists = prev.some(m => m.id === updatedMovie.id);
-      const updated = exists
-        ? prev.map(m => m.id === updatedMovie.id ? updatedMovie : m)
-        : [updatedMovie, ...prev];
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
 
-      try {
-        const existingInitIds = new Set(NIGERIAN_MOVIES.map(m => m.id));
-        const onlyCustom = updated.filter(m => !existingInitIds.has(m.id) || m.id === updatedMovie.id);
-        localStorage.setItem(PULLED_MOVIES_STORAGE_KEY, JSON.stringify(onlyCustom));
-      } catch (e) {
-        console.error('Failed to cache updated movie locally:', e);
-      }
-      return updated;
-    });
-
-    // 2. Synchronize selected movie modal & trailer modal in real time
+    // Synchronize selected movie modal & trailer modal in real time
     if (selectedMovie?.id === updatedMovie.id) {
       setSelectedMovie(updatedMovie);
     }
@@ -340,9 +284,9 @@ export default function App() {
       setTrailerMovie(updatedMovie);
     }
 
-    // 3. Save updates directly to Firebase Firestore
+    // Direct write to Firebase Firestore
     try {
-      await updateFirestoreMovie(updatedMovie, currentUser?.uid);
+      await updateFirestoreMovie(updatedMovie, currentUser.uid);
       setSyncNotice(`Updated "${updatedMovie.title}" and saved to Firebase Firestore!`);
       setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
@@ -417,6 +361,11 @@ export default function App() {
 
   // Update multi-status tracking (Plan to Watch, Watching, Completed, On Hold, Dropped, or un-track)
   const handleUpdateTrackingStatus = async (movieId: string, status: MovieWatchStatus | null) => {
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+
     let updatedList: UserTrackedItem[];
 
     if (!status) {
@@ -622,6 +571,10 @@ export default function App() {
 
   // Multi-decade historical import sweep (1980s to 2020s up to page 5 with strict deduplication)
   const handleTriggerHistoricalSweep = async () => {
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
     if (isSweeping) return;
     setIsSweeping(true);
     setShowSweepPill(true);
@@ -647,9 +600,11 @@ export default function App() {
         });
 
         // Persist all imported movies directly to Firebase Firestore custom_movies collection
-        saveMultipleFirestoreMovies(result.newMovies, currentUser?.uid).catch(err => {
-          console.warn('Failed to save historical sweep movies to Firestore:', err);
-        });
+        if (currentUser) {
+          saveMultipleFirestoreMovies(result.newMovies, currentUser.uid).catch(err => {
+            console.warn('Failed to save historical sweep movies to Firestore:', err);
+          });
+        }
       }
     } catch (err) {
       console.error('Historical sweep error:', err);
@@ -658,8 +613,12 @@ export default function App() {
     }
   };
 
-  // Toggle watchlist
+  // Toggle watchlist (Auth-gated)
   const handleToggleWatchlist = (movieId: string) => {
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
     const isCurrentlyTracked = watchlistIds.includes(movieId) || trackingMap.has(movieId);
     if (isCurrentlyTracked) {
       handleUpdateTrackingStatus(movieId, null);
@@ -691,14 +650,17 @@ export default function App() {
       console.error('Failed to save review locally', e);
     }
 
-    // Sync to Firestore
-    try {
-      await addFirestoreReview({
-        ...newRev,
-        userId: currentUser?.uid
-      });
-    } catch (err) {
-      console.warn('Firestore review sync failed (saved locally):', err);
+    // Sync to Firestore if logged in
+    if (currentUser) {
+      try {
+        await addFirestoreReview({
+          ...newRev,
+          userId: currentUser.uid,
+          userEmail: currentUser.email || undefined
+        });
+      } catch (err) {
+        console.warn('Firestore review sync failed (saved locally):', err);
+      }
     }
   };
 
@@ -716,10 +678,12 @@ export default function App() {
       console.error('Failed to update local reviews', e);
     }
 
-    try {
-      await deleteFirestoreReview(reviewId);
-    } catch (err) {
-      console.warn('Failed to delete review from Firestore:', err);
+    if (currentUser) {
+      try {
+        await deleteFirestoreReview(reviewId);
+      } catch (err) {
+        console.warn('Failed to delete review from Firestore:', err);
+      }
     }
   };
 
@@ -757,10 +721,12 @@ export default function App() {
             return updated;
           });
 
-          // Also persist all new releases to Firebase Firestore custom_movies collection
-          saveMultipleFirestoreMovies(result.syncedMovies, currentUser?.uid).catch(err => {
-            console.warn('Failed to save auto-synced movies to Firestore:', err);
-          });
+          // Also persist all new releases to Firebase Firestore custom_movies collection if logged in
+          if (currentUser) {
+            saveMultipleFirestoreMovies(result.syncedMovies, currentUser.uid).catch(err => {
+              console.warn('Failed to save auto-synced movies to Firestore:', err);
+            });
+          }
 
           setSyncNotice(`AfroMovieDB automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
           setTimeout(() => {
@@ -1065,7 +1031,6 @@ export default function App() {
           onSelectMovie={setSelectedMovie}
           onOpenTrailer={setTrailerMovie}
           onDeleteReview={handleDeleteReview}
-          onDeleteCustomMovie={handleDeleteMovie}
           onOpenAddMovie={() => setIsAutoPullOpen(true)}
           onOpenAuth={() => setIsAuthOpen(true)}
           onSignOut={handleSignOut}
@@ -1200,7 +1165,6 @@ export default function App() {
                         onToggleWatchlist={handleToggleWatchlist}
                         watchStatus={trackingMap.get(movie.id)?.status || (watchlistIds.includes(movie.id) ? 'plan_to_watch' : null)}
                         onUpdateStatus={handleUpdateTrackingStatus}
-                        onDeleteMovie={handleDeleteMovie}
                         viewMode="grid"
                         currentUser={currentUser}
                         onOpenEdit={(m) => setEditingMovie(m)}
@@ -1223,7 +1187,6 @@ export default function App() {
                         onToggleWatchlist={handleToggleWatchlist}
                         watchStatus={trackingMap.get(movie.id)?.status || (watchlistIds.includes(movie.id) ? 'plan_to_watch' : null)}
                         onUpdateStatus={handleUpdateTrackingStatus}
-                        onDeleteMovie={handleDeleteMovie}
                         viewMode="compact"
                         currentUser={currentUser}
                         onOpenEdit={(m) => setEditingMovie(m)}

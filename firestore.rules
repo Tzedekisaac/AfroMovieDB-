@@ -14,10 +14,11 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && (resource.data.userId == request.auth.uid || request.auth.token.email != null);
     }
     
-    // Custom user-added or synced movies
+    // Custom user-added or synced movies (Add-Only Mode: movie deletions are strictly forbidden)
     match /custom_movies/{movieId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
     }
 
     // Public and user curated themed film collections
