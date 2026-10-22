@@ -65,6 +65,8 @@ export interface Movie {
   culturalSignificance: string;
   streamingPlatforms: StreamingPlatform[];
   collections?: string[];
+  originCountry?: string[];
+  originalLanguage?: string;
   trailerYoutubeId: string;
   amvcaAwards?: string[];
   quote?: Quote;

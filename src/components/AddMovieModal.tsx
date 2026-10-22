@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Movie, Genre, Era, StreamingPlatform, CastMember } from '../types';
 import { normalizeMovieCollections } from '../utils/movieCollections';
+import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
 import { 
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
@@ -107,7 +108,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
   // Confirm adding web-pulled movie
   const handleConfirmAddWebMovie = () => {
     if (!previewMovie) return;
-    onAddMovie(previewMovie);
+    onAddMovie(sanitizeAndTagMovie(previewMovie) as Movie);
     setAddedSuccessId(previewMovie.id);
     setTimeout(() => {
       setAddedSuccessId(null);
@@ -170,7 +171,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
       source: 'custom'
     };
 
-    onAddMovie(newMovie);
+    onAddMovie(sanitizeAndTagMovie(newMovie) as Movie);
     setAddedSuccessId(newMovie.id);
     setTimeout(() => {
       setAddedSuccessId(null);

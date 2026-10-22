@@ -17,6 +17,7 @@ import {
   addFirestoreReview, 
   deleteFirestoreReview,
   subscribeToCustomMovies, 
+  initializeFirestoreMovieCatalog,
   saveFirestoreCustomMovie, 
   saveMultipleFirestoreMovies,
   updateFirestoreMovie 
@@ -32,7 +33,8 @@ import {
 } from './utils/api';
 import { NIGERIAN_MOVIES, INITIAL_REVIEWS } from './data/movies';
 import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
-import { normalizeMovieCollections } from './utils/movieCollections';
+import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
+import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
 import { Navbar } from './components/Navbar';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { CatalogueFilters } from './components/CatalogueFilters';
@@ -66,16 +68,19 @@ export default function App() {
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
-  // Custom movies synced from Firestore + local cache
-  const [firestoreCustomMovies, setFirestoreCustomMovies] = useState<Movie[]>([]);
+  // Catalog state is populated exclusively from the Firestore custom_movies snapshot.
+  const [isCatalogReady, setIsCatalogReady] = useState(false);
+  const [isCatalogInitializationComplete, setIsCatalogInitializationComplete] = useState(false);
+  const [catalogLoadError, setCatalogLoadError] = useState<string | null>(null);
 
   // Bulk sync state
   const [isSyncingReleases, setIsSyncingReleases] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
-  // Master Movies list state (Initial catalogue + real-time Firestore custom_movies onSnapshot sync)
-  const [moviesList, setMoviesList] = useState<Movie[]>(NIGERIAN_MOVIES);
+  // Master catalog: Firestore is the source of truth; the curated starter list is seeded there once.
+  const [moviesList, setMoviesList] = useState<Movie[]>([]);
 
   // Filters State
   const [filterState, setFilterState] = useState<FilterState>({
@@ -135,6 +140,7 @@ export default function App() {
   const [sweepProgress, setSweepProgress] = useState<HistoricalSweepProgress | null>(null);
   const [showSweepPill, setShowSweepPill] = useState(true);
   const sweepAbortController = useRef<AbortController | null>(null);
+  const dailySyncStarted = useRef(false);
 
   // User reviews state (seeded from INITIAL_REVIEWS + Firestore/localStorage)
   const [reviews, setReviews] = useState<UserReview[]>(() => {
@@ -166,6 +172,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
+      setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
@@ -231,34 +238,49 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore Real-time Custom Movies (Global Real-Time Cloud Sync for all live visitors)
+  // Listen to Firestore Real-time Custom Movies (the sole source for the displayed catalog).
   useEffect(() => {
+    let isMounted = true;
     const unsubscribe = subscribeToCustomMovies((cloudMovies) => {
-      const sanitizedCloud = (cloudMovies || []).map(sanitizeMovie);
-      setFirestoreCustomMovies(sanitizedCloud);
-      setMoviesList(() => {
-        if (!sanitizedCloud || sanitizedCloud.length === 0) {
-          return NIGERIAN_MOVIES;
-        }
-        const cloudIds = new Set(sanitizedCloud.map(m => m.id));
-        const baseFiltered = NIGERIAN_MOVIES.filter(m => !cloudIds.has(m.id));
-        return [...sanitizedCloud, ...baseFiltered];
-      });
+      const sanitizedCloud = (cloudMovies || []).map((movie) => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
+      setMoviesList(sanitizedCloud);
+      setIsCatalogReady(true);
+      setCatalogLoadError(null);
       setSelectedMovie(curr => {
         if (!curr) return null;
         const match = sanitizedCloud.find(m => m.id === curr.id);
         return match || curr;
       });
+    }, (error) => {
+      setCatalogLoadError(error.message || 'Could not connect to the Firestore movie catalog.');
+      setIsCatalogReady(true);
     });
-    return () => unsubscribe();
+
+    initializeFirestoreMovieCatalog(NIGERIAN_MOVIES)
+      .then(({ migratedCount, seededCount }) => {
+        if (migratedCount > 0 || seededCount > 0) {
+          console.info(`Firestore catalog initialized: ${migratedCount} movies tagged, ${seededCount} starter movies seeded.`);
+        }
+      })
+      .catch((error) => {
+        console.error('Could not initialize the Firestore movie catalog:', error);
+        if (isMounted) {
+          setCatalogLoadError(error instanceof Error ? error.message : 'Could not initialize the Firestore movie catalog.');
+        }
+      })
+      .finally(() => {
+        if (isMounted) setIsCatalogInitializationComplete(true);
+      });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
   const handleMoviePulled = async (newMovie: Movie) => {
-    const movieWithDefaultCollection: Movie = {
-      ...newMovie,
-      collections: normalizeMovieCollections(newMovie.collections)
-    };
+    const movieWithDefaultCollection = sanitizeAndTagMovie(newMovie) as Movie;
     // Direct real-time write to Firebase Firestore custom_movies collection
     try {
       await saveFirestoreCustomMovie(movieWithDefaultCollection, currentUser?.uid || 'community-contributor');
@@ -276,18 +298,19 @@ export default function App() {
 
   // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)
   const handleUpdateMovie = async (updatedMovie: Movie) => {
+    const safeUpdatedMovie = sanitizeAndTagMovie(updatedMovie) as Movie;
     // Synchronize selected movie modal & trailer modal in real time
-    if (selectedMovie?.id === updatedMovie.id) {
-      setSelectedMovie(updatedMovie);
+    if (selectedMovie?.id === safeUpdatedMovie.id) {
+      setSelectedMovie(safeUpdatedMovie);
     }
-    if (trailerMovie?.id === updatedMovie.id) {
-      setTrailerMovie(updatedMovie);
+    if (trailerMovie?.id === safeUpdatedMovie.id) {
+      setTrailerMovie(safeUpdatedMovie);
     }
 
     // Direct write to Firebase Firestore custom_movies
     try {
-      await updateFirestoreMovie(updatedMovie, currentUser?.uid || 'community-editor');
-      setSyncNotice(`Updated "${updatedMovie.title}" and saved to Firebase Firestore!`);
+      await updateFirestoreMovie(safeUpdatedMovie, currentUser?.uid || 'community-editor');
+      setSyncNotice(`Updated "${safeUpdatedMovie.title}" and saved to Firebase Firestore!`);
       setTimeout(() => setSyncNotice(null), 4500);
     } catch (err) {
       console.error('Error saving movie updates to Firestore:', err);
@@ -335,10 +358,11 @@ export default function App() {
               ratingCount: 10,
               genreIds: [],
               popularity: 1
-            }).then(loadedMovie => {
+            }).then(async loadedMovie => {
               if (!isCancelled && loadedMovie) {
-                setMoviesList(prev => [loadedMovie, ...prev.filter(m => m.id !== loadedMovie.id)]);
-                setSelectedMovie(loadedMovie);
+                const safeMovie = sanitizeAndTagMovie(loadedMovie) as Movie;
+                await saveFirestoreCustomMovie(safeMovie);
+                if (!isCancelled) setSelectedMovie(safeMovie);
               }
             }).catch(e => console.warn('Could not auto-resolve shared online movie', e));
           }
@@ -754,9 +778,13 @@ export default function App() {
     }
   };
 
-  // Automated daily background sync: checks if 24 hours have elapsed since last TMDb release sync.
-  // Runs automatically on app startup without requiring manual user button clicks.
+  // Automated daily background sync begins only after Firestore's initial read, seeding, and auth check.
   useEffect(() => {
+    if (!isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || dailySyncStarted.current) {
+      return;
+    }
+
+    dailySyncStarted.current = true;
     let isMounted = true;
 
     const runAutomatedDailySync = async () => {
@@ -797,7 +825,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [currentUser]);
+  }, [currentUser, isAuthReady, isCatalogReady, isCatalogInitializationComplete]);
 
   const handleSignOut = async () => {
     try {
@@ -881,8 +909,14 @@ export default function App() {
   // Filter and sort movies
   const filteredMovies = useMemo(() => {
     return moviesList.filter(movie => {
+      // "All" is intentionally not gated by collection tags or TMDb metadata:
+      // every entry here came from the custom_movies Firestore snapshot.
+      const selectedCollection = activeCollection.trim().toLowerCase();
+      const allTitlesSelected = selectedCollection === 'all' ||
+        selectedCollection === DEFAULT_MOVIE_COLLECTION.toLowerCase();
+
       // Community filter
-      if (activeCollection === 'community' && !movie.isUserAdded) {
+      if (!allTitlesSelected && activeCollection === 'community' && !movie.isUserAdded) {
         return false;
       }
 
@@ -1154,7 +1188,17 @@ export default function App() {
             />
 
             {/* Movie Results Grid or List */}
-            {filteredMovies.length === 0 ? (
+            {!isCatalogReady ? (
+              <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-3xl border border-slate-800 bg-slate-900/40 p-8 text-center">
+                <Film className="h-10 w-10 animate-pulse text-emerald-400" />
+                <p className="text-sm text-slate-300">Loading the movie catalog from Firestore…</p>
+              </div>
+            ) : catalogLoadError && moviesList.length === 0 ? (
+              <div className="rounded-3xl border border-rose-900/60 bg-rose-950/20 p-8 text-center">
+                <h3 className="font-bold text-white">Could not load the movie catalog</h3>
+                <p className="mt-2 text-sm text-slate-400">{catalogLoadError}</p>
+              </div>
+            ) : filteredMovies.length === 0 ? (
               <div className="text-center py-20 bg-slate-900/40 border border-slate-800 rounded-3xl p-8 space-y-4">
                 <div className="w-16 h-16 rounded-2xl bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
                   <Film className="w-8 h-8" />

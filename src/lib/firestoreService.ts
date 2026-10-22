@@ -1,11 +1,12 @@
 import { 
   collection, doc, getDoc, setDoc, updateDoc, 
   deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, 
-  Timestamp, getDocFromServer, writeBatch 
+  Timestamp, getDocFromServer, getDocs, writeBatch
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types';
-import { normalizeMovieCollections } from '../utils/movieCollections';
+import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections';
+import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
 
 export enum OperationType {
   CREATE = 'create',
@@ -85,31 +86,6 @@ export function stripUndefined<T>(obj: T): T {
 }
 
 /**
- * Replaces undefined values throughout a movie payload with null while preserving
- * Firestore special values such as Timestamp and FieldValue instances.
- */
-function replaceUndefinedWithNull<T>(value: T): T {
-  if (value === undefined) {
-    return null as T;
-  }
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => replaceUndefinedWithNull(item)) as T;
-  }
-  if (value.constructor && value.constructor.name !== 'Object') {
-    return value;
-  }
-
-  const cleaned: Record<string, any> = {};
-  for (const [key, child] of Object.entries(value as Record<string, any>)) {
-    cleaned[key] = replaceUndefinedWithNull(child);
-  }
-  return cleaned as T;
-}
-
-/**
  * Prepares movie data safely for Firestore by providing safe fallbacks for optional or missing fields
  * (like nativeTitle, directorAvatarUrl, trailerYoutubeId, boxOffice, quote, etc.) and stripping any undefined values.
  */
@@ -143,7 +119,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     backdropUrl: movie.backdropUrl || movie.posterUrl || '',
     synopsis: movie.synopsis || '',
     culturalSignificance: movie.culturalSignificance || '',
-    collections: normalizeMovieCollections(movie.collections),
+    collections: movie.collections,
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({
           name: p?.name || 'Netflix',
@@ -169,7 +145,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     lastEditedByUserId: movie.lastEditedByUserId || null
   };
 
-  return replaceUndefinedWithNull(safeData);
+  return sanitizeAndTagMovie(safeData);
 }
 
 // Test connection on boot per Firebase guidelines
@@ -399,22 +375,106 @@ export async function deleteFirestoreReview(reviewId: string) {
  * Custom / User-Added / Edited Movies Operations
  * Stored in collection 'custom_movies'
  */
-export function subscribeToCustomMovies(callback: (movies: Movie[]) => void) {
+export function subscribeToCustomMovies(
+  callback: (movies: Movie[]) => void,
+  onError?: (error: Error) => void
+) {
   const col = collection(db, 'custom_movies');
   return onSnapshot(col, (snap) => {
     const list: Movie[] = [];
     snap.forEach((docSnap) => {
+      if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
       const d = docSnap.data() as any;
-      list.push({
+      list.push(sanitizeAndTagMovie({
         ...d,
         id: docSnap.id
-      });
+      }) as Movie);
     });
     callback(list);
   }, (err) => {
     handleFirestoreError(err, OperationType.LIST, 'custom_movies');
     console.warn('Custom movies listener warning:', err);
+    onError?.(err);
   });
+}
+
+const CATALOG_MIGRATION_DOC_ID = '__naijareel_migration_all_nigerian_titles_v1__';
+
+/**
+ * One-time additive catalog migration:
+ * - tags existing custom_movies documents that are missing the default collection;
+ * - seeds the curated starter catalog into Firestore when its IDs are absent;
+ * - stores a completion marker in custom_movies so later visitors skip the scan.
+ */
+export async function initializeFirestoreMovieCatalog(
+  seedMovies: Movie[]
+): Promise<{ migratedCount: number; seededCount: number; skipped: boolean }> {
+  const migrationRef = doc(db, 'custom_movies', CATALOG_MIGRATION_DOC_ID);
+
+  try {
+    const migrationSnapshot = await getDoc(migrationRef);
+    if (migrationSnapshot.exists()) {
+      return { migratedCount: 0, seededCount: 0, skipped: true };
+    }
+
+    const movieCollection = collection(db, 'custom_movies');
+    const snapshot = await getDocs(movieCollection);
+    const existingIds = new Set<string>();
+    const writes: Array<{ ref: any; payload: Record<string, any> }> = [];
+    let migratedCount = 0;
+    let seededCount = 0;
+
+    snapshot.forEach((movieSnapshot) => {
+      if (movieSnapshot.id === CATALOG_MIGRATION_DOC_ID) return;
+      existingIds.add(movieSnapshot.id);
+
+      const data = movieSnapshot.data();
+      const hasDefaultTag = Array.isArray(data.collections) &&
+        data.collections.some((tag: unknown) => typeof tag === 'string' && tag.trim() === DEFAULT_MOVIE_COLLECTION);
+      if (!hasDefaultTag) {
+        writes.push({
+          ref: doc(db, 'custom_movies', movieSnapshot.id),
+          payload: sanitizeAndTagMovie({ ...data, id: movieSnapshot.id })
+        });
+        migratedCount++;
+      }
+    });
+
+    for (const seedMovie of seedMovies) {
+      if (existingIds.has(seedMovie.id)) continue;
+      writes.push({
+        ref: doc(db, 'custom_movies', seedMovie.id),
+        payload: sanitizeAndTagMovie({
+          ...seedMovie,
+          isUserAdded: Boolean(seedMovie.isUserAdded),
+          source: seedMovie.source || 'system'
+        })
+      });
+      seededCount++;
+    }
+
+    // Firestore batches are limited to 500 operations; keep a margin for safety.
+    for (let start = 0; start < writes.length; start += 400) {
+      const batch = writeBatch(db);
+      for (const write of writes.slice(start, start + 400)) {
+        batch.set(write.ref, write.payload, { merge: true });
+      }
+      await batch.commit();
+    }
+
+    await setDoc(migrationRef, {
+      documentType: 'catalog_migration',
+      migration: 'all-nigerian-titles-v1',
+      migratedCount,
+      seededCount,
+      completedAt: serverTimestamp()
+    });
+
+    return { migratedCount, seededCount, skipped: false };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'custom_movies/catalog-migration');
+    throw err;
+  }
 }
 
 /**

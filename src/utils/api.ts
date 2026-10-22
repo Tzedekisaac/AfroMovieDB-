@@ -1,6 +1,7 @@
 import { Movie, Era, StreamingPlatform, CastMember, PersonProfileData, UserTrackedItem, RecommendationItem } from '../types';
 import { saveMultipleFirestoreMovies } from '../lib/firestoreService';
 import { normalizeMovieCollections } from './movieCollections';
+import { sanitizeAndTagMovie } from './sanitizeAndTagMovie';
 
 export const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
 export const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
@@ -433,7 +434,7 @@ export function formatTmdbResult(item: any, fallbackTitle: string): WebMovieCand
 export function sanitizeMovie(movie: any): Movie {
   if (!movie || typeof movie !== 'object') {
     const fallbackId = `nollywood-classic-${Date.now()}`;
-    return {
+    return sanitizeAndTagMovie({
       id: fallbackId,
       title: 'Untitled Nollywood Film',
       nativeTitle: '',
@@ -453,14 +454,14 @@ export function sanitizeMovie(movie: any): Movie {
       synopsis: 'A captivating Nollywood cinematic story celebrating Nigerian film culture.',
       culturalSignificance: 'Celebrated Nigerian film reflecting rich cultural narratives.',
       streamingPlatforms: [{ name: 'YouTube', badgeColor: 'bg-red-500', url: 'https://www.youtube.com' }],
-      collections: normalizeMovieCollections([]),
+      collections: [],
       trailerYoutubeId: '',
       amvcaAwards: ['Nollywood Cinema Selection'],
       featured: false,
       boxOfficeChampion: false,
       isUserAdded: true,
       source: 'web_pulled'
-    };
+    }) as Movie;
   }
 
   // 1. Title
@@ -642,8 +643,20 @@ export function sanitizeMovie(movie: any): Movie {
     ? movie.amvcaAwards.map((a: any) => String(a || '').trim()).filter(Boolean)
     : ['Nollywood Cinema Selection'];
   const collections = normalizeMovieCollections(movie.collections);
+  const rawCountries = movie.originCountry ?? movie.origin_country ?? movie.country ?? movie.production_countries;
+  const originCountry = Array.isArray(rawCountries)
+    ? rawCountries
+        .map((country: any) => typeof country === 'string'
+          ? country
+          : String(country?.iso_3166_1 || country?.code || ''))
+        .map((country: string) => country.trim().toUpperCase())
+        .filter(Boolean)
+    : typeof rawCountries === 'string'
+      ? rawCountries.split(/[,\s|]+/).map((country: string) => country.trim().toUpperCase()).filter(Boolean)
+      : [];
+  const originalLanguage = String(movie.originalLanguage || movie.original_language || '').trim().toLowerCase();
 
-  return {
+  return sanitizeAndTagMovie({
     id,
     title,
     nativeTitle,
@@ -667,6 +680,8 @@ export function sanitizeMovie(movie: any): Movie {
     culturalSignificance,
     streamingPlatforms,
     collections,
+    originCountry,
+    originalLanguage,
     trailerYoutubeId,
     amvcaAwards,
     quote: movie.quote && typeof movie.quote === 'object' && movie.quote.text
@@ -684,7 +699,7 @@ export function sanitizeMovie(movie: any): Movie {
     lastEditedByUserId: typeof movie.lastEditedByUserId === 'string' ? movie.lastEditedByUserId : undefined,
     syncedAt: movie.syncedAt || new Date().toISOString(),
     tmdbId
-  };
+  }) as Movie;
 }
 
 /**
@@ -725,14 +740,20 @@ export async function discoverNigerianMovies(
     if (dateRange?.lte) urlLang += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlLang);
 
-    // Endpoint 4: TMDb Nollywood keyword tags (207317: Nollywood, 263548: Nigerian Cinema)
+    // Endpoint 4: English-language films explicitly associated with Nigeria.
+    let urlNigerianEnglish = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&with_original_language=en&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
+    if (dateRange?.gte) urlNigerianEnglish += `&primary_release_date.gte=${dateRange.gte}`;
+    if (dateRange?.lte) urlNigerianEnglish += `&primary_release_date.lte=${dateRange.lte}`;
+    urls.push(urlNigerianEnglish);
+
+    // Endpoint 5: TMDb Nollywood keyword tags (207317: Nollywood, 263548: Nigerian Cinema)
     let urlKeyword = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_keywords=207317|263548&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlKeyword += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlKeyword += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlKeyword);
 
-    // Endpoint 5: Multi-page search query fallbacks for Nollywood and Nigerian cinema
-    if (requestedPage <= 5 && !dateRange) {
+    // Search fallbacks also run during era sweeps; results are filtered to the requested dates below.
+    if (requestedPage <= 5) {
       urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${requestedPage}&include_adult=false`);
       urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false`);
     }
@@ -1236,9 +1257,10 @@ export async function bulkSyncNigerianNewReleases(
 ): Promise<Movie[]> {
   const syncedMovies: Movie[] = [];
   let page = 1;
+  const effectiveMaxPages = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(maxPages) || 1));
   const currentPool = [...existingMovies];
 
-  while (syncedMovies.length < maxMovies && page <= maxPages) {
+  while (syncedMovies.length < maxMovies && page <= effectiveMaxPages) {
     const { candidates, totalPages } = await discoverNigerianMovies(page, 'release_date.desc');
     if (candidates.length === 0) break;
 
@@ -1256,7 +1278,7 @@ export async function bulkSyncNigerianNewReleases(
 
       try {
         const rawMovie = await pullMovieDetailsFromOnline(candidate);
-        const movie = sanitizeMovie(rawMovie);
+        const movie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
         syncedMovies.push(movie);
         currentPool.push(movie);
 
@@ -1273,7 +1295,7 @@ export async function bulkSyncNigerianNewReleases(
     await sleep(60);
   }
 
-  const finalSynced = syncedMovies.map(sanitizeMovie);
+  const finalSynced = syncedMovies.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
   if (finalSynced.length > 0) {
     try {
       await saveMultipleFirestoreMovies(finalSynced);
@@ -1435,7 +1457,7 @@ export async function runDeepHistoricalSweep(
             try {
               const rawMovie = await pullMovieDetailsFromOnline(candidate, false, signal);
               throwIfAborted(signal);
-              const fullMovie = sanitizeMovie(rawMovie);
+              const fullMovie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
               newImported.push(fullMovie);
               pool.push(fullMovie);
               publishProgress();
@@ -1469,7 +1491,7 @@ export async function runDeepHistoricalSweep(
 
             const rawMovie = await pullMovieDetailsFromOnline(cand, false, signal);
             throwIfAborted(signal);
-            const fullMovie = sanitizeMovie(rawMovie);
+            const fullMovie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
             newImported.push(fullMovie);
             pool.push(fullMovie);
             publishProgress();
@@ -1484,7 +1506,7 @@ export async function runDeepHistoricalSweep(
     if (!signal?.aborted) throw error;
   }
 
-  const finalSanitized = newImported.map(sanitizeMovie);
+  const finalSanitized = newImported.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
   if (signal?.aborted) {
     const summary = `Historical sweep stopped. ${finalSanitized.length} classic films were found; no Firestore save was started.`;
     onProgress?.({
@@ -1541,7 +1563,7 @@ export async function checkAndRunDailySync(
 
     // Perform background sync (fetching up to 24 fresh Nigerian releases with strict deduplication)
     const freshMovies = await bulkSyncNigerianNewReleases(24, onProgress, existingMovies, 15);
-    const sanitizedFresh = freshMovies.map(sanitizeMovie);
+    const sanitizedFresh = freshMovies.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
 
     // Direct real-time batch write to Firestore custom_movies collection
     if (sanitizedFresh.length > 0) {
