@@ -49,6 +49,7 @@ import { StandaloneListView } from './components/StandaloneListView';
 import { CustomListModal } from './components/CustomListModal';
 import { HistoricalSweepPill } from './components/HistoricalSweepPill';
 import { Footer } from './components/Footer';
+import { SiteInfoModal, type SiteInfoPage } from './components/SiteInfoModal';
 import { 
   Sparkles, Flame, Award, Film, Bookmark, 
   RotateCcw, SlidersHorizontal, Search, Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown 
@@ -156,6 +157,7 @@ export default function App() {
   const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
   const [isHeritageOpen, setIsHeritageOpen] = useState(false);
   const [isAutoPullOpen, setIsAutoPullOpen] = useState(false);
+  const [activeSiteInfoPage, setActiveSiteInfoPage] = useState<SiteInfoPage | null>(null);
 
   // Quick collections shortcut selection
   const [activeCollection, setActiveCollection] = useState<string>('all');
@@ -1282,6 +1284,21 @@ export default function App() {
           setFilterState(prev => ({ ...prev, [key]: val }));
         }}
         onOpenHeritage={() => setIsHeritageOpen(true)}
+        onOpenSiteInfo={setActiveSiteInfoPage}
+      />
+
+      {/* Footer information overlays */}
+      <SiteInfoModal
+        page={activeSiteInfoPage}
+        onClose={() => setActiveSiteInfoPage(null)}
+        onOpenAddFilm={() => {
+          setActiveSiteInfoPage(null);
+          if (!currentUser) {
+            setIsAuthOpen(true);
+          } else {
+            setIsAutoPullOpen(true);
+          }
+        }}
       />
 
       {/* Movie Details Modal */}

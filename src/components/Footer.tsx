@@ -1,13 +1,15 @@
 import React from 'react';
-import { Film, Heart, Sparkles, Globe, Award } from 'lucide-react';
+import { Film, Award } from 'lucide-react';
 import { FilterState } from '../types';
+import type { SiteInfoPage } from './SiteInfoModal';
 
 interface FooterProps {
   onQuickFilter: (key: keyof FilterState, val: string) => void;
   onOpenHeritage: () => void;
+  onOpenSiteInfo: (page: SiteInfoPage) => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage }) => {
+export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage, onOpenSiteInfo }) => {
   return (
     <footer className="w-full max-w-full bg-[#070a10] border-t border-slate-800 text-slate-400 text-xs py-10 sm:py-12 mt-12 sm:mt-16">
       <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
@@ -118,7 +120,27 @@ export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage })
 
         {/* Bottom bar */}
         <div className="pt-8 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
-          <p>© {new Date().getFullYear()} NaijaReel. Built to celebrate Nigerian Storytellers, Actors & Directors.</p>
+          <div className="flex flex-col items-center gap-3 sm:items-start">
+            <p>Copyright © 2026 NaijaReel. All rights reserved.</p>
+            <nav aria-label="Footer information" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 sm:justify-start">
+              {[
+                { page: 'about', label: 'About Us' },
+                { page: 'contact', label: 'Contact Us' },
+                { page: 'privacy', label: 'Privacy Policy' },
+                { page: 'terms', label: 'Terms of Use' },
+                { page: 'dmca', label: 'DMCA Notice' }
+              ].map(({ page, label }) => (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => onOpenSiteInfo(page as SiteInfoPage)}
+                  className="text-slate-400 hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-sm transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+          </div>
           <div className="flex items-center gap-1 text-slate-400">
             <span>Powered by the vibrant spirit of Nollywood</span>
             <span className="inline-block w-2.5 h-2 bg-emerald-600 rounded-sm mx-1" title="Nigeria" />
