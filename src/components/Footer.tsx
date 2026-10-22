@@ -9,8 +9,8 @@ interface FooterProps {
 
 export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage }) => {
   return (
-    <footer className="w-full bg-[#070a10] border-t border-slate-800 text-slate-400 text-xs py-12 mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <footer className="w-full max-w-full bg-[#070a10] border-t border-slate-800 text-slate-400 text-xs py-10 sm:py-12 mt-12 sm:mt-16">
+      <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         {/* Main Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">

@@ -946,7 +946,7 @@ export default function App() {
         : 'bg-[#07100b] selection:bg-emerald-600 selection:text-white';
 
   return (
-    <div className={`min-h-screen ${appThemeClasses} text-slate-100 flex flex-col transition-colors duration-300`}>
+    <div className={`min-h-screen w-full max-w-full overflow-x-hidden ${appThemeClasses} text-slate-100 flex flex-col transition-colors duration-300`}>
       
       {/* Navigation */}
       <Navbar
@@ -1054,10 +1054,10 @@ export default function App() {
           )}
 
           {/* Main Catalogue Section */}
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-8 space-y-6">
+          <main className="flex-1 w-full max-w-full px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 space-y-6">
             
             {/* Curated Spotlight Collections Tabs */}
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            <div className="w-full max-w-full flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
               <span className="text-xs font-bold text-slate-400 shrink-0 uppercase tracking-wider pl-1">
                 Collections:
               </span>
@@ -1153,7 +1153,7 @@ export default function App() {
                 {viewMode === 'grid' ? (
                   <div 
                     id="movies-grid"
-                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8"
+                    className="w-full max-w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6 lg:gap-7"
                   >
                     {displayedMovies.map((movie) => (
                       <MovieCard
@@ -1175,7 +1175,7 @@ export default function App() {
                 ) : (
                   <div 
                     id="movies-list"
-                    className="space-y-3"
+                    className="w-full max-w-full space-y-3"
                   >
                     {displayedMovies.map((movie) => (
                       <MovieCard

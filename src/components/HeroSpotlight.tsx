@@ -40,7 +40,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
   const inWatchlist = isWatchlisted(currentMovie.id);
 
   return (
-    <div className="relative w-full h-[520px] sm:h-[580px] lg:h-[640px] overflow-hidden bg-slate-950 border-b border-slate-800">
+    <div className="relative w-full max-w-full h-[520px] sm:h-[580px] lg:h-[640px] overflow-hidden bg-slate-950 border-b border-slate-800">
       {/* Background Backdrop Image with Gradients */}
       <div className="absolute inset-0">
         <img
@@ -55,8 +55,8 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
       </div>
 
       {/* Main Content Area */}
-      <div className="relative h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-12 sm:pb-16 pt-20">
-        <div className="max-w-2xl sm:max-w-3xl space-y-4">
+      <div className="relative h-full w-full max-w-full px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-12 sm:pb-16 pt-20">
+        <div className="w-full max-w-full lg:max-w-4xl space-y-4">
           
           {/* Badges Bar */}
           <div className="flex flex-wrap items-center gap-2">
@@ -176,7 +176,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
         </div>
 
         {/* Carousel controls & thumbnail strip */}
-        <div className="absolute bottom-6 right-4 sm:right-8 flex items-center gap-3">
+        <div className="absolute bottom-4 sm:bottom-6 right-4 sm:right-8 flex items-center gap-2 sm:gap-3">
           {/* Arrow navigation */}
           <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-full p-1">
             <button

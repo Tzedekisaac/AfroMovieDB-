@@ -330,7 +330,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   // Unauthenticated Guest View
   if (!currentUser) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-16 text-center space-y-6">
+      <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center space-y-6">
         <div className="p-8 sm:p-12 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
           
@@ -371,7 +371,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   // Authenticated Profile View
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
       {/* Top Breadcrumb & Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-400">
@@ -599,7 +599,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           
           {/* Scrollable Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full scrollbar-none">
+          <div className="w-full max-w-full flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             
             {/* All Tracked */}
             <button

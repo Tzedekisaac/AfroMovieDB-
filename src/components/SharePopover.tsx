@@ -154,7 +154,7 @@ export const SharePopover: React.FC<SharePopoverProps> = ({
       {isOpen && (
         <div 
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-0 bottom-full mb-2 w-56 p-2 rounded-xl bg-slate-900/95 border border-slate-700/80 backdrop-blur-xl shadow-2xl z-50 animate-fadeIn text-left"
+          className="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-2 rounded-xl bg-slate-900/95 border border-slate-700/80 backdrop-blur-xl shadow-2xl z-50 animate-fadeIn text-left"
         >
           <div className="flex items-center justify-between px-2 py-1.5 border-b border-slate-800 mb-1.5">
             <span className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">

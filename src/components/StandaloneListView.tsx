@@ -91,8 +91,8 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
     <div className="min-h-screen bg-[#080b12] text-slate-100 flex flex-col selection:bg-emerald-600 selection:text-white animate-in fade-in duration-300">
       
       {/* Top Standalone Navigation Bar */}
-      <header className="sticky top-0 z-40 w-full bg-[#0b0f17]/95 backdrop-blur-md border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-4">
+      <header className="sticky top-0 z-40 w-full max-w-full bg-[#0b0f17]/95 backdrop-blur-md border-b border-slate-800">
+        <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-4">
           <button
             onClick={onClose}
             id="standalone-back-to-catalogue-btn"
@@ -138,10 +138,10 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
       </header>
 
       {/* Standalone Curator Hero Banner */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-slate-900/80 via-[#0b0f17] to-[#080b12] border-b border-slate-800/80 py-12 sm:py-16">
+      <section className="relative w-full max-w-full overflow-hidden bg-gradient-to-b from-slate-900/80 via-[#0b0f17] to-[#080b12] border-b border-slate-800/80 py-10 sm:py-16">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-emerald-900/10 via-transparent to-transparent pointer-events-none" />
 
-        <div className="relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center sm:text-left flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
+        <div className="relative w-full max-w-full px-4 sm:px-6 lg:px-8 text-center sm:text-left flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
           
           {/* Curator Avatar Badge */}
           <div className="relative shrink-0">
@@ -227,7 +227,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
       </section>
 
       {/* Curated Movies Grid */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+      <main className="flex-1 w-full max-w-full px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-6">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             <span>Films in this Collection</span>
@@ -249,7 +249,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-7 lg:gap-8">
+          <div className="w-full max-w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6 lg:gap-7">
             {listMovies.map((movie) => (
               <MovieCard
                 key={movie.id}

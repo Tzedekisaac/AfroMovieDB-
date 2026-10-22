@@ -155,7 +155,7 @@ export const TrackingStatusPicker: React.FC<TrackingStatusPickerProps> = ({
       {isOpen && (
         <div 
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-0 top-full mt-1.5 z-50 w-52 rounded-xl bg-slate-900 border border-slate-700/80 shadow-2xl p-1.5 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150"
+          className="absolute right-0 top-full mt-1.5 z-50 w-52 max-w-[calc(100vw-2rem)] rounded-xl bg-slate-900 border border-slate-700/80 shadow-2xl p-1.5 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150"
         >
           <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
             Set Watch Status

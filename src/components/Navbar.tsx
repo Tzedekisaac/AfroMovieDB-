@@ -65,9 +65,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30';
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-[#0b0f17]/95 backdrop-blur-md border-b border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-20 gap-3">
+    <header className="sticky top-0 z-40 w-full max-w-full bg-[#0b0f17]/95 backdrop-blur-md border-b border-slate-800">
+      <div className="w-full max-w-full px-4 sm:px-6 lg:px-8">
+        <div className="w-full max-w-full flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-4">
           
           {/* Logo / Brand */}
           <div 
@@ -271,8 +271,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Mobile Search Bar */}
-        <div className="pb-3 md:hidden">
-          <div className="relative">
+        <div className="pb-3 md:hidden w-full max-w-full">
+          <div className="relative w-full">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             <input
               id="search-input-mobile"

@@ -20,7 +20,7 @@ export const HistoricalSweepPill: React.FC<HistoricalSweepPillProps> = ({
   // If not running and no recent progress, show the unobtrusive launch pill
   if (!isRunning && (!progress || progress.percent === 100 && !progress.statusText)) {
     return (
-      <div className="fixed bottom-5 right-5 z-40 animate-in fade-in duration-300">
+      <div className="fixed bottom-4 right-4 sm:bottom-5 sm:right-5 z-40 max-w-[calc(100vw-2rem)] animate-in fade-in duration-300">
         <button
           onClick={onTriggerSweep}
           id="btn-trigger-historical-sweep"
@@ -41,7 +41,7 @@ export const HistoricalSweepPill: React.FC<HistoricalSweepPillProps> = ({
   const isComplete = progress?.isComplete;
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 max-w-sm w-full px-3 sm:px-0 sm:w-96 animate-in slide-in-from-bottom-4 duration-300">
+    <div className="fixed bottom-4 right-4 left-4 sm:left-auto sm:bottom-5 sm:right-5 sm:w-96 max-w-full z-40 animate-in slide-in-from-bottom-4 duration-300">
       <div className="rounded-2xl bg-slate-900/95 border border-slate-700/80 shadow-2xl shadow-black/80 backdrop-blur-xl p-4 text-slate-100">
         
         {/* Header Strip */}

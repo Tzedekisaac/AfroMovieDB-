@@ -94,9 +94,9 @@ export const CatalogueFilters: React.FC<CatalogueFiltersProps> = ({
         : 'focus:ring-emerald-500';
 
   return (
-    <div className="space-y-4 pt-6 pb-2" id="catalogue-filters-section">
+    <div className="w-full max-w-full space-y-4 pt-4 sm:pt-6 pb-2" id="catalogue-filters-section">
       {/* Top row: Genre Pills scrollable bar */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+      <div className="w-full max-w-full flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 shrink-0 flex items-center gap-1.5 pl-1 pr-2">
           <Film className={`w-3.5 h-3.5 ${accentText}`} />
           Genres:
@@ -121,10 +121,10 @@ export const CatalogueFilters: React.FC<CatalogueFiltersProps> = ({
       </div>
 
       {/* Second row: Dropdown selectors & Sorting */}
-      <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 sm:p-4 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3">
+      <div className="w-full max-w-full bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 sm:p-4 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3">
         
         {/* Left Filter Dropdowns */}
-        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full sm:w-auto min-w-0 flex-1">
           
           {/* Era Filter */}
           <div className="relative">
@@ -196,7 +196,7 @@ export const CatalogueFilters: React.FC<CatalogueFiltersProps> = ({
         </div>
 
         {/* Right Sort & View toggles */}
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
           
           {/* Match counter badge */}
           <span className="text-xs text-slate-400">
