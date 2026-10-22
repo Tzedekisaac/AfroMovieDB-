@@ -40,13 +40,13 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
   const inWatchlist = isWatchlisted(currentMovie.id);
 
   return (
-    <div className="relative w-full max-w-full h-[520px] sm:h-[580px] lg:h-[640px] overflow-hidden bg-slate-950 border-b border-slate-800">
+    <div className="relative w-full max-w-full min-h-[600px] sm:h-[580px] lg:h-[640px] overflow-hidden bg-slate-950 border-b border-slate-800">
       {/* Background Backdrop Image with Gradients */}
       <div className="absolute inset-0">
         <img
           src={currentMovie.backdropUrl}
           alt={currentMovie.title}
-          className="w-full h-full object-cover object-center transform scale-105 transition-all duration-1000 ease-out"
+          className="w-full h-full object-cover object-center transition-all duration-1000 ease-out"
         />
         {/* Layered cinematic vignette gradient overlays */}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f17] via-[#0b0f17]/75 to-transparent" />
@@ -55,24 +55,24 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
       </div>
 
       {/* Main Content Area */}
-      <div className="relative h-full w-full max-w-full px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-12 sm:pb-16 pt-20">
-        <div className="w-full max-w-full lg:max-w-4xl space-y-4">
+      <div className="relative min-h-[600px] sm:h-full w-full max-w-full px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-24 sm:pb-16 pt-20">
+        <div className="w-full max-w-full min-w-0 lg:max-w-4xl space-y-4">
           
           {/* Badges Bar */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-2.5 py-1 text-xs font-bold tracking-wider uppercase bg-emerald-500 text-slate-950 rounded-md shadow-sm">
+          <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:gap-2">
+            <span className="max-w-full rounded-md bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-tight tracking-wider text-slate-950 shadow-sm sm:px-2.5 sm:text-xs">
               Spotlight
             </span>
-            <span className="px-2.5 py-1 text-xs font-medium bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-200 rounded-md">
+            <span className="max-w-full rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-[10px] font-medium leading-tight text-slate-200 backdrop-blur-md sm:px-2.5 sm:text-xs">
               {currentMovie.era}
             </span>
             {currentMovie.boxOfficeChampion && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-amber-500/20 border border-amber-500/50 text-amber-300 rounded-md">
+              <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-amber-500/50 bg-amber-500/20 px-2 py-1 text-[10px] font-semibold leading-tight text-amber-300 sm:px-2.5 sm:text-xs">
                 <Flame className="w-3.5 h-3.5 text-amber-400" />
                 <span>Box Office Record</span>
               </span>
             )}
-            <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/90 rounded-md text-amber-400 text-xs font-bold border border-slate-700">
+            <div className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/90 px-2 py-1 text-[10px] font-bold text-amber-400 sm:text-xs">
               <Star className="w-3.5 h-3.5 fill-amber-400" />
               <span>{currentMovie.rating.toFixed(1)}</span>
               <span className="text-slate-400 font-normal">/10</span>
@@ -80,8 +80,8 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
           </div>
 
           {/* Title & Native Title */}
-          <div>
-            <h1 className="font-cinema text-3xl sm:text-5xl lg:text-6xl font-extrabold text-white tracking-tight drop-shadow-md leading-tight">
+          <div className="min-w-0">
+            <h1 className="break-words font-cinema text-3xl sm:text-5xl lg:text-6xl font-extrabold text-white tracking-tight drop-shadow-md leading-tight [overflow-wrap:anywhere]">
               {currentMovie.title}
             </h1>
             {currentMovie.nativeTitle && (
@@ -108,18 +108,23 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
           </p>
 
           {/* Metadata pill row */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 pt-1">
-            <span>Dir: <strong className="text-slate-200">{currentMovie.director}</strong></span>
-            <span>•</span>
-            <span>{currentMovie.releaseYear}</span>
-            <span>•</span>
-            <span>{currentMovie.runtimeMinutes} mins</span>
-            <span>•</span>
-            <span>Lang: <strong className="text-slate-200">{currentMovie.languages.join(', ')}</strong></span>
+          <div className="flex max-w-full flex-wrap items-center gap-1.5 pt-1 text-[11px] sm:gap-2 sm:text-xs">
+            <span className="max-w-full break-words rounded-full border border-slate-700/70 bg-slate-900/60 px-2.5 py-1 text-slate-300">
+              Dir: <strong className="text-slate-100">{currentMovie.director}</strong>
+            </span>
+            <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2.5 py-1 text-slate-300">
+              {currentMovie.releaseYear}
+            </span>
+            <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2.5 py-1 text-slate-300">
+              {currentMovie.runtimeMinutes} mins
+            </span>
+            <span className="max-w-full break-words rounded-full border border-slate-700/70 bg-slate-900/60 px-2.5 py-1 text-slate-300">
+              Lang: <strong className="text-slate-100">{currentMovie.languages.join(', ')}</strong>
+            </span>
           </div>
 
           {/* CTAs */}
-          <div className="flex flex-wrap items-center gap-3 pt-3">
+          <div className="flex flex-wrap items-center gap-2 pt-2 sm:gap-3 sm:pt-3">
             <button
               id="hero-watch-trailer-btn"
               onClick={() => onOpenTrailer(currentMovie)}
@@ -176,7 +181,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
         </div>
 
         {/* Carousel controls & thumbnail strip */}
-        <div className="absolute bottom-4 sm:bottom-6 right-4 sm:right-8 flex items-center gap-2 sm:gap-3">
+        <div className="absolute right-4 top-4 flex items-center gap-2 sm:bottom-6 sm:right-8 sm:top-auto sm:gap-3">
           {/* Arrow navigation */}
           <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-full p-1">
             <button

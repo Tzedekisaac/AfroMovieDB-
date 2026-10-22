@@ -66,8 +66,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 w-full max-w-full bg-[#0b0f17]/95 backdrop-blur-md border-b border-slate-800">
-      <div className="w-full max-w-full px-4 sm:px-6 lg:px-8">
-        <div className="w-full max-w-full flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-4">
+      <div className="w-full max-w-full px-3 sm:px-6 lg:px-8">
+        <div className="w-full max-w-full flex flex-wrap items-center justify-between min-h-16 gap-x-2 gap-y-2 py-2 md:h-20 md:flex-nowrap md:gap-4 md:py-0">
           
           {/* Logo / Brand */}
           <div 
@@ -83,7 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 watchlistOnly: false
               }));
             }}
-            className="flex items-center gap-3 cursor-pointer group select-none shrink-0"
+            className="flex items-center gap-2 sm:gap-3 cursor-pointer group select-none shrink-0"
             id="brand-logo"
           >
             <div className={`relative w-10 h-10 rounded-xl bg-gradient-to-br ${brandGradient} flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform`}>
@@ -131,7 +131,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          <div className="flex w-full items-center justify-end gap-1.5 shrink-0 sm:gap-2.5 md:w-auto">
             {/* Add Movie / Auto-Pull Trigger (Auth-Gated with prompt for guests) */}
             <button
               id="open-autopull-btn"
@@ -142,7 +142,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenAutoPull();
                 }
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-full sm:px-3 ${
                 activeTheme === 'obsidian' 
                   ? 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white' 
                   : activeTheme === 'gold' 
@@ -194,7 +194,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenWatchlist();
                 }
               }}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-full ${watchlistBtnStyle} shadow-md transition-all cursor-pointer`}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs sm:px-3 sm:text-sm font-semibold rounded-full ${watchlistBtnStyle} shadow-md transition-all cursor-pointer`}
               title={currentUser ? "View your saved watchlist" : "Sign in to access your watchlist"}
             >
               <Bookmark className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -220,7 +220,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenAuth();
                 }
               }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-full border transition-all cursor-pointer shadow-sm select-none ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs sm:gap-2 sm:px-3.5 sm:text-sm font-semibold rounded-full border transition-all cursor-pointer shadow-sm select-none ${
                 currentUser
                   ? currentView === 'profile'
                     ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 border-amber-400 shadow-md shadow-amber-950/40 font-bold hover:brightness-110 active:scale-95'
