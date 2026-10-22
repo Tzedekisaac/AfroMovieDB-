@@ -444,7 +444,11 @@ export async function saveFirestoreCustomMovie(movie: Movie, userId?: string): P
  * Save multiple movies directly to Firebase Firestore in real-time batches
  * Handles batching (chunks of 350) and provides immediate global propagation via Firestore onSnapshot
  */
-export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: string): Promise<number> {
+export async function saveMultipleFirestoreMovies(
+  movies: Movie[],
+  userId?: string,
+  signal?: AbortSignal
+): Promise<number> {
   if (!movies || movies.length === 0) return 0;
   let savedCount = 0;
   const currentUid = userId || auth.currentUser?.uid || 'community-sync';
@@ -452,6 +456,7 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
   // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
   const chunkSize = 350;
   for (let i = 0; i < movies.length; i += chunkSize) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
     const chunk = movies.slice(i, i + chunkSize);
     try {
       const batch = writeBatch(db);
@@ -465,15 +470,19 @@ export async function saveMultipleFirestoreMovies(movies: Movie[], userId?: stri
         preparedPayload.syncedAt = serverTimestamp();
         batch.set(movieRef, preparedPayload, { merge: true });
       }
+      if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       await batch.commit();
       savedCount += chunk.length;
     } catch (batchErr) {
+      if (signal?.aborted) throw batchErr;
       console.warn('Batch write failed, falling back to sequential writes:', batchErr);
       for (const movie of chunk) {
+        if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
         try {
           await saveFirestoreCustomMovie(movie, currentUid);
           savedCount++;
         } catch (singleErr) {
+          if (signal?.aborted) throw singleErr;
           console.warn(`Failed to save movie ${movie.id} in fallback:`, singleErr);
         }
       }

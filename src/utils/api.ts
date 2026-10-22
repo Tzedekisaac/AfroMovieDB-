@@ -210,7 +210,12 @@ export function pruneExpiredCache(): void {
  * CRITICAL REQUIREMENT: Automatically appends 'Nollywood' or 'Nigerian movie' to the query
  * if not already present, preventing name collisions with foreign films (e.g. 'King of Thieves Nollywood').
  */
-export async function searchMoviesOnline(query: string, forceRefresh: boolean = false): Promise<WebMovieCandidate[]> {
+export async function searchMoviesOnline(
+  query: string,
+  forceRefresh: boolean = false,
+  signal?: AbortSignal
+): Promise<WebMovieCandidate[]> {
+  throwIfAborted(signal);
   if (!query.trim()) return [];
 
   const cleanQuery = query.trim();
@@ -229,7 +234,7 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
   try {
     // 1. Direct raw title query first (essential for classic Nollywood titles like Saworoide, Domitilla, Karishika, Issakaba)
     const rawUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(cleanQuery)}&include_adult=false&language=en-US&page=1`;
-    const rawRes = await safeTmdbFetch(rawUrl);
+    const rawRes = await safeTmdbFetch(rawUrl, 2, signal);
     if (rawRes && rawRes.ok) {
       const rawData = await rawRes.json();
       results = rawData.results || [];
@@ -238,7 +243,7 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
     // 2. If nothing found, search with 'Nollywood' appended to avoid foreign title collisions
     if (results.length === 0 && !lowerQuery.includes('nollywood')) {
       const fallbackUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nollywood`)}&include_adult=false&language=en-US&page=1`;
-      const fallbackRes = await safeTmdbFetch(fallbackUrl);
+      const fallbackRes = await safeTmdbFetch(fallbackUrl, 2, signal);
       if (fallbackRes && fallbackRes.ok) {
         const fallbackData = await fallbackRes.json();
         results = fallbackData.results || [];
@@ -248,7 +253,7 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
     // 3. Fallback with 'Nigerian movie'
     if (results.length === 0 && !lowerQuery.includes('nigerian')) {
       const fallbackUrl2 = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nigerian movie`)}&include_adult=false&language=en-US&page=1`;
-      const fallbackRes2 = await safeTmdbFetch(fallbackUrl2);
+      const fallbackRes2 = await safeTmdbFetch(fallbackUrl2, 2, signal);
       if (fallbackRes2 && fallbackRes2.ok) {
         const fallbackData2 = await fallbackRes2.json();
         results = fallbackData2.results || [];
@@ -261,6 +266,7 @@ export async function searchMoviesOnline(query: string, forceRefresh: boolean = 
     }
     return formatted;
   } catch (error) {
+    if (signal?.aborted) throw error;
     console.warn('Error searching movies online:', error);
     return [];
   }
@@ -271,23 +277,36 @@ export const FALLBACK_BACKDROP = 'https://images.unsplash.com/photo-153644013662
 
 export const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+}
+
 /**
  * Safe fetch helper with backoff for TMDb rate limits (HTTP 429) and network blips
  */
-export async function safeTmdbFetch(url: string, retries: number = 2): Promise<Response | null> {
+export async function safeTmdbFetch(
+  url: string,
+  retries: number = 2,
+  signal?: AbortSignal
+): Promise<Response | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
+    throwIfAborted(signal);
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
       if (res.status === 429) {
         await sleep(350 * (attempt + 1));
         continue;
       }
       return res;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       if (attempt === retries) return null;
       await sleep(200);
     }
   }
+  throwIfAborted(signal);
   return null;
 }
 
@@ -677,9 +696,11 @@ export function sanitizeMovie(movie: any): Movie {
 export async function discoverNigerianMovies(
   page: number = 1,
   sortBy: 'release_date.desc' | 'popularity.desc' = 'release_date.desc',
-  dateRange?: { gte?: string; lte?: string }
+  dateRange?: { gte?: string; lte?: string },
+  signal?: AbortSignal
 ): Promise<{ candidates: WebMovieCandidate[]; totalPages: number; totalResults: number }> {
   try {
+    throwIfAborted(signal);
     const apiKey = getActiveTmdbApiKey();
     const requestedPage = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(page) || 1));
     const urls: string[] = [];
@@ -716,7 +737,8 @@ export async function discoverNigerianMovies(
       urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false`);
     }
 
-    const responses = await Promise.allSettled(urls.map(u => safeTmdbFetch(u)));
+    const responses = await Promise.allSettled(urls.map(u => safeTmdbFetch(u, 2, signal)));
+    throwIfAborted(signal);
     const allRawItems: any[] = [];
     let maxTotalPages = 1;
 
@@ -763,6 +785,7 @@ export async function discoverNigerianMovies(
       totalResults: candidates.length
     };
   } catch (error) {
+    if (signal?.aborted) throw error;
     console.error('Error discovering Nigerian movies from TMDb:', error);
     return { candidates: [], totalPages: 0, totalResults: 0 };
   }
@@ -771,7 +794,12 @@ export async function discoverNigerianMovies(
 /**
  * Fetch movie credits (cast & crew) directly from TMDb with 24-hour caching
  */
-export async function fetchMovieCredits(tmdbId: number, forceRefresh: boolean = false): Promise<{ cast: any[]; crew: any[] } | null> {
+export async function fetchMovieCredits(
+  tmdbId: number,
+  forceRefresh: boolean = false,
+  signal?: AbortSignal
+): Promise<{ cast: any[]; crew: any[] } | null> {
+  throwIfAborted(signal);
   const cacheKey = `credits_${tmdbId}`;
   if (!forceRefresh) {
     const cached = getCachedItem<{ cast: any[]; crew: any[] }>(cacheKey);
@@ -780,7 +808,7 @@ export async function fetchMovieCredits(tmdbId: number, forceRefresh: boolean = 
 
   try {
     const url = `${TMDB_BASE_URL}/movie/${tmdbId}/credits?api_key=${getActiveTmdbApiKey()}`;
-    const res = await safeTmdbFetch(url);
+    const res = await safeTmdbFetch(url, 2, signal);
     if (!res || !res.ok) return null;
     const data = await res.json();
     if (data) {
@@ -788,6 +816,7 @@ export async function fetchMovieCredits(tmdbId: number, forceRefresh: boolean = 
     }
     return data;
   } catch (err) {
+    if (signal?.aborted) throw err;
     console.warn(`Failed to fetch credits for TMDb ID ${tmdbId}:`, err);
     return null;
   }
@@ -797,7 +826,12 @@ export async function fetchMovieCredits(tmdbId: number, forceRefresh: boolean = 
  * Pull full movie details including credits and trailers from TMDb with 24-hour caching.
  * Ensures the returned movie object is 100% rigorously sanitized.
  */
-export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, forceRefresh: boolean = false): Promise<Movie> {
+export async function pullMovieDetailsFromOnline(
+  candidate: WebMovieCandidate,
+  forceRefresh: boolean = false,
+  signal?: AbortSignal
+): Promise<Movie> {
+  throwIfAborted(signal);
   const cleanCand = sanitizeCandidate(candidate);
   const cacheKey = `movie_${cleanCand.tmdbId || cleanCand.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
   if (!forceRefresh) {
@@ -818,7 +852,7 @@ export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, f
 
   try {
     const detailsUrl = `${TMDB_BASE_URL}/movie/${cleanCand.tmdbId}?api_key=${getActiveTmdbApiKey()}&append_to_response=credits,videos`;
-    const res = await safeTmdbFetch(detailsUrl);
+    const res = await safeTmdbFetch(detailsUrl, 2, signal);
     if (res && res.ok) {
       const d = await res.json();
       
@@ -845,7 +879,7 @@ export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, f
       // Credits: inspect appended credits or query movie credits endpoint
       let credits = d.credits;
       if (!credits || (!credits.crew?.length && !credits.cast?.length)) {
-        const fallbackCredits = await fetchMovieCredits(cleanCand.tmdbId);
+        const fallbackCredits = await fetchMovieCredits(cleanCand.tmdbId, false, signal);
         if (fallbackCredits) {
           credits = fallbackCredits;
         }
@@ -901,9 +935,11 @@ export async function pullMovieDetailsFromOnline(candidate: WebMovieCandidate, f
       }
     }
   } catch (err) {
+    if (signal?.aborted) throw err;
     console.warn('Failed to fetch detailed TMDb attributes:', err);
   }
 
+  throwIfAborted(signal);
   // Fallback genres if empty
   if (genres.length === 0) {
     if (cleanCand.genreIds && cleanCand.genreIds.length > 0) {
@@ -1274,9 +1310,14 @@ export const POPULAR_NIGERIAN_WEB_SUGGESTIONS = [
  */
 export interface HistoricalSweepProgress {
   decadeLabel: string;
+  page: number;
+  totalPages: number;
   importedCount: number;
   percent: number;
   isComplete: boolean;
+  isCancelled: boolean;
+  isSaving: boolean;
+  firestoreSaveStarted: boolean;
   statusText: string;
 }
 
@@ -1322,8 +1363,9 @@ const CLASSIC_QUERIES_BY_ERA: Record<string, string[]> = {
 export async function runDeepHistoricalSweep(
   existingMovies: Movie[],
   onProgress?: (progress: HistoricalSweepProgress) => void,
-  pagesPerEra: number = 20
-): Promise<{ newMovies: Movie[]; summary: string }> {
+  pagesPerEra: number = 20,
+  signal?: AbortSignal
+): Promise<{ newMovies: Movie[]; summary: string; cancelled: boolean }> {
   // Scan up to 20 result pages for each decade, respecting the available page count.
   const requestedPages = Number.isFinite(pagesPerEra) ? Math.floor(pagesPerEra) : 20;
   const effectivePagesPerEra = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, requestedPages));
@@ -1338,144 +1380,143 @@ export async function runDeepHistoricalSweep(
 
   const totalSteps = erasToScan.length * effectivePagesPerEra;
   let currentStep = 0;
+  let currentDecade = erasToScan[0].label;
+  let currentPage = 1;
+  let currentTotalPages = effectivePagesPerEra;
+  let currentPercent = 0;
   const pool = [...existingMovies];
   const newImported: Movie[] = [];
 
-  for (let eraIdx = 0; eraIdx < erasToScan.length; eraIdx++) {
-    const era = erasToScan[eraIdx];
-    const eraBatchBefore = newImported.length;
+  const publishProgress = () => {
+    onProgress?.({
+      decadeLabel: currentDecade,
+      page: currentPage,
+      totalPages: currentTotalPages,
+      importedCount: newImported.length,
+      percent: currentPercent,
+      isComplete: false,
+      isCancelled: false,
+      isSaving: false,
+      firestoreSaveStarted: false,
+      statusText: `Scanning ${currentDecade} • Page ${currentPage}/${currentTotalPages} • ${newImported.length} Classic Films Added`
+    });
+  };
 
-    // Query 10 to 20 pages deep per era using broad Nigerian origin parameters
-    for (let page = 1; page <= effectivePagesPerEra; page++) {
-      currentStep++;
-      const percent = Math.min(95, Math.round((currentStep / totalSteps) * 100));
+  try {
+    for (const era of erasToScan) {
+      throwIfAborted(signal);
+      currentDecade = era.label;
 
-      if (onProgress) {
-        onProgress({
-          decadeLabel: era.label,
-          importedCount: newImported.length,
-          percent,
-          isComplete: false,
-          statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
-        });
-      }
+      // Query multiple pages per era using broad Nigerian origin parameters.
+      for (let page = 1; page <= effectivePagesPerEra; page++) {
+        throwIfAborted(signal);
+        currentPage = page;
+        currentTotalPages = effectivePagesPerEra;
+        currentStep++;
+        currentPercent = Math.min(95, Math.round((currentStep / totalSteps) * 100));
+        publishProgress();
 
-      try {
-        const { candidates, totalPages } = await discoverNigerianMovies(
-          page, 
-          'popularity.desc', 
-          { gte: era.gte, lte: era.lte }
-        );
+        try {
+          const { candidates, totalPages } = await discoverNigerianMovies(
+            page,
+            'popularity.desc',
+            { gte: era.gte, lte: era.lte },
+            signal
+          );
+          throwIfAborted(signal);
+          currentTotalPages = Math.max(1, Math.min(effectivePagesPerEra, totalPages || 1));
+          publishProgress();
 
-        if (candidates && candidates.length > 0) {
           for (const rawCandidate of candidates) {
+            throwIfAborted(signal);
             const candidate = sanitizeCandidate(rawCandidate);
-            if (!candidate.title) continue;
-
-            // Relaxed Deduplication Check
-            if (isDuplicateMovie(candidate, pool)) {
-              continue;
-            }
+            if (!candidate.title || isDuplicateMovie(candidate, pool)) continue;
 
             try {
-              const rawMovie = await pullMovieDetailsFromOnline(candidate);
+              const rawMovie = await pullMovieDetailsFromOnline(candidate, false, signal);
+              throwIfAborted(signal);
               const fullMovie = sanitizeMovie(rawMovie);
               newImported.push(fullMovie);
               pool.push(fullMovie);
-
-              if (onProgress) {
-                onProgress({
-                  decadeLabel: era.label,
-                  importedCount: newImported.length,
-                  percent,
-                  isComplete: false,
-                  statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
-                });
-              }
-            } catch (e) {
-              console.warn(`Could not pull full details for ${candidate.title}`, e);
+              publishProgress();
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              console.warn(`Could not pull full details for ${candidate.title}`, error);
             }
           }
-        }
 
-        // Break if TMDb catalogue doesn't have any more pages for this specific date range
-        if (page >= totalPages) {
-          break;
-        }
+          // Break if TMDb catalogue doesn't have any more pages for this date range.
+          if (page >= currentTotalPages) break;
 
-        // Polite rate-limiting delay between page queries
-        await sleep(75);
-      } catch (err) {
-        console.warn(`Error during historical sweep of ${era.label} page ${page}:`, err);
+          await sleep(75);
+          throwIfAborted(signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          console.warn(`Error during historical sweep of ${era.label} page ${page}:`, error);
+        }
       }
-    }
 
-    // Targeted era search query fallback to ensure iconic classic Nollywood milestones are captured
-    const classicTitles = CLASSIC_QUERIES_BY_ERA[era.label] || [];
-    for (const titleQuery of classicTitles) {
-      try {
-        const searchCandidates = await searchMoviesOnline(titleQuery);
-        for (const rawCand of searchCandidates.slice(0, 3)) {
-          const cand = sanitizeCandidate(rawCand);
-          if (!cand.title) continue;
-          if (isDuplicateMovie(cand, pool)) continue;
+      // Targeted searches capture iconic classic Nollywood milestones not found by discovery.
+      for (const titleQuery of CLASSIC_QUERIES_BY_ERA[era.label] || []) {
+        throwIfAborted(signal);
+        try {
+          const searchCandidates = await searchMoviesOnline(titleQuery, false, signal);
+          throwIfAborted(signal);
+          for (const rawCand of searchCandidates.slice(0, 3)) {
+            throwIfAborted(signal);
+            const cand = sanitizeCandidate(rawCand);
+            if (!cand.title || isDuplicateMovie(cand, pool)) continue;
 
-          const rawMovie = await pullMovieDetailsFromOnline(cand);
-          const fullMovie = sanitizeMovie(rawMovie);
-          newImported.push(fullMovie);
-          pool.push(fullMovie);
-
-          if (onProgress) {
-            onProgress({
-              decadeLabel: era.label,
-              importedCount: newImported.length,
-              percent: Math.min(95, Math.round((currentStep / totalSteps) * 100)),
-              isComplete: false,
-              statusText: `Scanning ${era.label} • ${newImported.length} Classic Films Added`
-            });
+            const rawMovie = await pullMovieDetailsFromOnline(cand, false, signal);
+            throwIfAborted(signal);
+            const fullMovie = sanitizeMovie(rawMovie);
+            newImported.push(fullMovie);
+            pool.push(fullMovie);
+            publishProgress();
           }
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          console.warn(`Error searching classic query ${titleQuery}:`, error);
         }
-      } catch (err) {
-        console.warn(`Error searching classic query ${titleQuery}:`, err);
       }
     }
-
-    // Real-time batch write to Firestore custom_movies collection for the completed era
-    // This immediately triggers onSnapshot for every global visitor currently viewing the catalogue
-    const newEraMovies = newImported.slice(eraBatchBefore);
-    if (newEraMovies.length > 0) {
-      try {
-        await saveMultipleFirestoreMovies(newEraMovies);
-      } catch (err) {
-        console.warn(`Real-time Firestore batch write for ${era.label} encountered an issue:`, err);
-      }
-    }
+  } catch (error) {
+    if (!signal?.aborted) throw error;
   }
 
   const finalSanitized = newImported.map(sanitizeMovie);
-  
-  // Final safeguard batch write ensuring 100% of imported movies are persisted in Firestore custom_movies
-  if (finalSanitized.length > 0) {
-    try {
-      await saveMultipleFirestoreMovies(finalSanitized);
-    } catch (err) {
-      console.warn('Final Firestore batch write for historical sweep encountered an issue:', err);
-    }
-  }
-
-  const summary = `Historical sweep completed! ${finalSanitized.length} classic films imported and published directly to Cloud Firestore across multi-decade eras.`;
-
-  if (onProgress) {
-    onProgress({
-      decadeLabel: 'Complete',
+  if (signal?.aborted) {
+    const summary = `Historical sweep stopped. ${finalSanitized.length} classic films were found; no Firestore save was started.`;
+    onProgress?.({
+      decadeLabel: currentDecade,
+      page: currentPage,
+      totalPages: currentTotalPages,
       importedCount: finalSanitized.length,
-      percent: 100,
-      isComplete: true,
+      percent: currentPercent,
+      isComplete: false,
+      isCancelled: true,
+      isSaving: false,
+      firestoreSaveStarted: false,
       statusText: summary
     });
+    return { newMovies: finalSanitized, summary, cancelled: true };
   }
 
-  return { newMovies: finalSanitized, summary };
+  const summary = `Historical sweep completed! ${finalSanitized.length} classic films found across multiple eras.`;
+  onProgress?.({
+    decadeLabel: 'Complete',
+    page: currentPage,
+    totalPages: currentTotalPages,
+    importedCount: finalSanitized.length,
+    percent: 100,
+    isComplete: true,
+    isCancelled: false,
+    isSaving: false,
+    firestoreSaveStarted: false,
+    statusText: summary
+  });
+
+  return { newMovies: finalSanitized, summary, cancelled: false };
 }
 
 /**
