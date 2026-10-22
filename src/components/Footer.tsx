@@ -22,7 +22,7 @@ export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage })
                 <Film className="w-4 h-4" />
               </div>
               <span className="font-cinema text-lg font-bold text-white tracking-wider">
-                AFRO<span className="text-emerald-400">MOVIEDB</span>
+                Naija<span className="text-emerald-400">Reel</span>
               </span>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
@@ -118,7 +118,7 @@ export const Footer: React.FC<FooterProps> = ({ onQuickFilter, onOpenHeritage })
 
         {/* Bottom bar */}
         <div className="pt-8 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
-          <p>© {new Date().getFullYear()} AfroMovieDB. Built to celebrate Nigerian Storytellers, Actors & Directors.</p>
+          <p>© {new Date().getFullYear()} NaijaReel. Built to celebrate Nigerian Storytellers, Actors & Directors.</p>
           <div className="flex items-center gap-1 text-slate-400">
             <span>Powered by the vibrant spirit of Nollywood</span>
             <span className="inline-block w-2.5 h-2 bg-emerald-600 rounded-sm mx-1" title="Nigeria" />

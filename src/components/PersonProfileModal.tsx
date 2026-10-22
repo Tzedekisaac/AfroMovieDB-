@@ -282,7 +282,7 @@ export const PersonProfileModal: React.FC<PersonProfileModalProps> = ({
                 )}
                 <div className="flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{catalogueFilmography.length} in AfroMovieDB Catalogue</span>
+                  <span>{catalogueFilmography.length} in NaijaReel Catalogue</span>
                 </div>
               </div>
 
@@ -436,7 +436,7 @@ export const PersonProfileModal: React.FC<PersonProfileModalProps> = ({
 
         {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-slate-800/80 bg-slate-900/80 flex items-center justify-between text-xs text-slate-400">
-          <span>AfroMovieDB Nollywood Cast & Crew Registry</span>
+          <span>NaijaReel Nollywood Cast & Crew Registry</span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium transition-colors"

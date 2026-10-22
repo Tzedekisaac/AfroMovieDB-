@@ -93,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-cinema text-xl sm:text-2xl font-bold tracking-wider text-white">
-                  AFRO<span className={brandAccentText}>MOVIEDB</span>
+                  Naija<span className={brandAccentText}>Reel</span>
                 </span>
                 <span className={`hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase border rounded ${badgeStyle}`}>
                   Nollywood

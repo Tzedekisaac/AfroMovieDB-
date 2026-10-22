@@ -156,12 +156,12 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
       posterUrl: manualPosterUrl.trim() || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=800&auto=format&fit=crop',
       backdropUrl: manualBackdropUrl.trim() || manualPosterUrl.trim() || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop',
       synopsis: manualSynopsis.trim() || 'A compelling new addition to the Nigerian cinema landscape.',
-      culturalSignificance: `User-curated addition to AfroMovieDB celebrating Nigerian storytelling.`,
+      culturalSignificance: `User-curated addition to NaijaReel celebrating Nigerian storytelling.`,
       streamingPlatforms: [
         { name: manualPlatform, badgeColor: platformBadge, url: 'https://google.com' }
       ],
       trailerYoutubeId: manualTrailerId.trim() || 'v8wIe7_xK3U',
-      amvcaAwards: ['AfroMovieDB Community Pick'],
+      amvcaAwards: ['NaijaReel Community Pick'],
       featured: false,
       boxOfficeChampion: false,
       isUserAdded: true,
@@ -204,7 +204,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
             </div>
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-white tracking-wide">
-                Add Movie to AfroMovieDB
+                Add Movie to NaijaReel
               </h2>
               <p className="text-xs text-slate-400">
                 Pull metadata & banners automatically from the internet or create a custom entry

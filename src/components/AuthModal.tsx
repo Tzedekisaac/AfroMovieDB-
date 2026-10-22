@@ -179,7 +179,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <LogIn className="w-6 h-6" />
               </div>
               <h2 className="text-2xl font-bold text-white">
-                {isSignUp ? 'Join AfroMovieDB' : 'Welcome Back'}
+                {isSignUp ? 'Join NaijaReel' : 'Welcome Back'}
               </h2>
               <p className="text-xs text-slate-400 mt-1">
                 {isSignUp 

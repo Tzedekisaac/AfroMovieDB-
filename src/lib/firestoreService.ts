@@ -481,7 +481,7 @@ export async function updateFirestoreMovie(movie: Movie, userId?: string): Promi
 
 export async function deleteFirestoreCustomMovie(movieId: string): Promise<void> {
   console.warn(`Movie deletion is disabled. The catalogue operates strictly in Add-Only Mode. Cannot delete movie: ${movieId}`);
-  throw new Error('Movie deletion is disabled. The AfroMovieDB registry operates strictly in Add-Only Mode.');
+  throw new Error('Movie deletion is disabled. The NaijaReel registry operates strictly in Add-Only Mode.');
 }
 
 /**

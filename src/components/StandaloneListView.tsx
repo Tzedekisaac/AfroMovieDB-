@@ -61,7 +61,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
     if (navigator.share) {
       navigator.share({
         title: `${list.title} - Curated Nollywood Collection`,
-        text: list.description || `Explore "${list.title}" curated by ${list.creatorName} on AfroMovieDB!`,
+        text: list.description || `Explore "${list.title}" curated by ${list.creatorName} on NaijaReel!`,
         url: shareUrl,
       }).catch(() => {});
     } else {
@@ -97,7 +97,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
             onClick={onClose}
             id="standalone-back-to-catalogue-btn"
             className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs sm:text-sm font-semibold text-slate-200 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
-            title="Return to main AfroMovieDB catalogue"
+            title="Return to main NaijaReel catalogue"
           >
             <ArrowLeft className="w-4 h-4 text-emerald-400" />
             <span>Browse Full Catalogue</span>
@@ -271,7 +271,7 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
 
       {/* Standalone Footer */}
       <footer className="border-t border-slate-800/80 bg-slate-950 py-8 text-center text-xs text-slate-500 space-y-2">
-        <p>Curated using <strong>AfroMovieDB</strong> — The Complete Nollywood & African Cinema Registry</p>
+        <p>Curated using <strong>NaijaReel</strong> — The Complete Nollywood & African Cinema Registry</p>
         <button
           onClick={onClose}
           className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer"

@@ -191,8 +191,8 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
     if (navigator.share) {
       navigator.share({
-        title: `${movie.title} on AfroMovieDB`,
-        text: `Explore ${movie.title} (${movie.releaseYear}) directed by ${movie.director} on AfroMovieDB!`,
+        title: `${movie.title} on NaijaReel`,
+        text: `Explore ${movie.title} (${movie.releaseYear}) directed by ${movie.director} on NaijaReel!`,
         url: shareUrl,
       }).catch(() => {});
     } else {

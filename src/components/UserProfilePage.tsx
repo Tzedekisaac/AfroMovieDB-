@@ -381,7 +381,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>AfroMovieDB Catalogue</span>
+            <span>NaijaReel Catalogue</span>
           </button>
           <span>/</span>
           <span className="text-white font-medium">User Profile & Activity</span>
@@ -461,7 +461,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-500">
                 <span className="flex items-center gap-1">
                   <Film className="w-3.5 h-3.5 text-amber-400" />
-                  <span>AfroMovieDB Cinephile Member</span>
+                  <span>NaijaReel Cinephile Member</span>
                 </span>
                 <span>•</span>
                 <button
@@ -730,7 +730,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 No movies found in this list
               </h3>
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                {searchFilter ? 'Try clearing your search filter.' : 'Browse the AfroMovieDB catalog and select a status on any movie.'}
+                {searchFilter ? 'Try clearing your search filter.' : 'Browse the NaijaReel catalog and select a status on any movie.'}
               </p>
               <button
                 onClick={onBackToCatalogue}
@@ -1435,7 +1435,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               <Film className="w-12 h-12 text-slate-600 mx-auto" />
               <h3 className="text-base font-bold text-white">No film contributions yet</h3>
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Add unindexed Nigerian movies or VHS classics to the AfroMovieDB catalog.
+                Add unindexed Nigerian movies or VHS classics to the NaijaReel catalog.
               </p>
               <button
                 onClick={onOpenAddMovie}

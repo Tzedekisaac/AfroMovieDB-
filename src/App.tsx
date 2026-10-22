@@ -674,7 +674,7 @@ export default function App() {
         const result = await checkAndRunDailySync(moviesList, (count: number, total: number) => {
           if (isMounted) {
             setIsSyncingReleases(true);
-            setSyncNotice(`Auto-syncing AfroMovieDB with fresh Nigerian releases (${count}/${total})...`);
+            setSyncNotice(`Auto-syncing NaijaReel with fresh Nigerian releases (${count}/${total})...`);
           }
         });
 
@@ -688,7 +688,7 @@ export default function App() {
             console.warn('Direct Firestore batch write for auto-sync encountered an issue:', err);
           }
 
-          setSyncNotice(`AfroMovieDB automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
+          setSyncNotice(`NaijaReel automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
           setTimeout(() => {
             if (isMounted) setSyncNotice(null);
           }, 4500);

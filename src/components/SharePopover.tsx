@@ -29,7 +29,7 @@ export const SharePopover: React.FC<SharePopoverProps> = ({
   };
 
   const shareUrl = getShareUrl();
-  const shareText = `Check out "${movieTitle}" on AfroMovieDB - The Definitive Nollywood Archive!`;
+  const shareText = `Check out "${movieTitle}" on NaijaReel - The Definitive Nollywood Archive!`;
 
   // Close when clicking outside
   useEffect(() => {
@@ -88,7 +88,7 @@ export const SharePopover: React.FC<SharePopoverProps> = ({
 
   const handleShareTwitter = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}&hashtags=Nollywood,AfroMovieDB,NigerianCinema`;
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}&hashtags=Nollywood,NaijaReel,NigerianCinema`;
     window.open(twitterUrl, '_blank', 'noopener,noreferrer');
   };
 
