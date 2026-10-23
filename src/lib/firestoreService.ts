@@ -120,6 +120,10 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     synopsis: movie.synopsis || '',
     culturalSignificance: movie.culturalSignificance || '',
     collections: movie.collections,
+    originCountry: Array.isArray(movie.originCountry)
+      ? movie.originCountry.map((country: unknown) => String(country || '').trim().toUpperCase()).filter(Boolean)
+      : [],
+    originalLanguage: typeof movie.originalLanguage === 'string' ? movie.originalLanguage.trim().toLowerCase() : '',
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({
           name: p?.name || 'Netflix',
@@ -138,7 +142,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
       : null,
     featured: Boolean(movie.featured),
     boxOfficeChampion: Boolean(movie.boxOfficeChampion),
-    isUserAdded: true,
+    isUserAdded: Boolean(movie.isUserAdded),
     source: movie.source || 'web_pulled',
     tmdbId: movie.tmdbId !== undefined && movie.tmdbId !== null ? Number(movie.tmdbId) : null,
     addedByUserId: movie.addedByUserId || null,

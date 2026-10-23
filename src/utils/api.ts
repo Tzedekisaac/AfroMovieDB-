@@ -785,11 +785,10 @@ export async function discoverNigerianMovies(
     for (const item of allRawItems) {
       if (!item || !item.id) continue;
       if (dateRange?.gte || dateRange?.lte) {
-        const itemDate = item.release_date || '';
-        if (itemDate) {
-          if (dateRange.gte && itemDate < dateRange.gte) continue;
-          if (dateRange.lte && itemDate > dateRange.lte) continue;
-        }
+        const itemDate = item.release_date || item.primary_release_date || '';
+        if (!itemDate) continue;
+        if (dateRange.gte && itemDate < dateRange.gte) continue;
+        if (dateRange.lte && itemDate > dateRange.lte) continue;
       }
       if (!uniqueMap.has(item.id)) {
         uniqueMap.set(item.id, item);
@@ -1246,7 +1245,7 @@ export function isDuplicateMovie(
 }
 
 /**
- * Bulk fetch and convert multiple pages of Nigerian films from TMDb with strict deduplication
+ * Bulk fetch and convert multiple pages of Nigerian films from TMDb with relaxed, ID-aware deduplication.
  * Queries up to 15-20 pages deep across new releases.
  */
 export async function bulkSyncNigerianNewReleases(
@@ -1271,7 +1270,7 @@ export async function bulkSyncNigerianNewReleases(
       // Skip invalid items
       if (!candidate.title || !candidate.posterUrl) continue;
 
-      // Strict duplicate prevention
+      // Skip existing films while allowing distinct remakes and alternate TMDb records.
       if (isDuplicateMovie(candidate, currentPool)) {
         continue;
       }
