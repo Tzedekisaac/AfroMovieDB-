@@ -1,6 +1,6 @@
 import { Movie, UserReview } from '../types';
 
-export const NIGERIAN_MOVIES: Movie[] = [
+const RAW_NIGERIAN_MOVIES: Movie[] = [
   {
     id: 'a-tribe-called-judah',
     title: 'A Tribe Called Judah',
@@ -1002,6 +1002,18 @@ export const NIGERIAN_MOVIES: Movie[] = [
     boxOfficeChampion: false
   }
 ];
+
+export const NIGERIAN_MOVIES: Movie[] = RAW_NIGERIAN_MOVIES.map(movie => ({
+  ...movie,
+  originCountry: ['NG'],
+  originalLanguage: movie.originalLanguage || (
+    movie.languages?.some(l => l.toLowerCase() === 'yoruba') ? 'yo' :
+    movie.languages?.some(l => l.toLowerCase() === 'igbo') ? 'ig' :
+    movie.languages?.some(l => l.toLowerCase() === 'hausa') ? 'ha' : 'en'
+  ),
+  source: 'system' as const,
+  isUserAdded: false
+}));
 
 export const INITIAL_REVIEWS: UserReview[] = [
   {

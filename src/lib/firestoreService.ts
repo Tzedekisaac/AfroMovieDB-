@@ -7,6 +7,7 @@ import { db, auth } from './firebase';
 import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types';
 import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
+import { isNigerianMovie, parseSpokenLanguages } from '../utils/nigerianMovieValidator';
 
 export enum OperationType {
   CREATE = 'create',
@@ -109,7 +110,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
         }))
       : [],
     genres: Array.isArray(movie.genres) && movie.genres.length > 0 ? movie.genres : ['Drama'],
-    languages: Array.isArray(movie.languages) && movie.languages.length > 0 ? movie.languages : ['English'],
+    languages: parseSpokenLanguages(movie),
     era: movie.era || 'Modern Global Era (2019-Present)',
     runtimeMinutes: Number(movie.runtimeMinutes) || 105,
     rating: typeof movie.rating === 'number' && !isNaN(movie.rating) ? movie.rating : 8.0,
@@ -120,10 +121,10 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     synopsis: movie.synopsis || '',
     culturalSignificance: movie.culturalSignificance || '',
     collections: movie.collections,
-    originCountry: Array.isArray(movie.originCountry)
+    originCountry: Array.isArray(movie.originCountry) && movie.originCountry.length > 0
       ? movie.originCountry.map((country: unknown) => String(country || '').trim().toUpperCase()).filter(Boolean)
-      : [],
-    originalLanguage: typeof movie.originalLanguage === 'string' ? movie.originalLanguage.trim().toLowerCase() : '',
+      : ['NG'],
+    originalLanguage: typeof movie.originalLanguage === 'string' && movie.originalLanguage.trim() ? movie.originalLanguage.trim().toLowerCase() : 'en',
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({
           name: p?.name || 'Netflix',
@@ -389,10 +390,12 @@ export function subscribeToCustomMovies(
     snap.forEach((docSnap) => {
       if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
       const d = docSnap.data() as any;
-      list.push(sanitizeAndTagMovie({
-        ...d,
-        id: docSnap.id
-      }) as Movie);
+      const movieCandidate = { ...d, id: docSnap.id };
+      // Filter out any leaked non-Nigerian movies in real time
+      if (!isNigerianMovie(movieCandidate)) {
+        return;
+      }
+      list.push(sanitizeAndTagMovie(movieCandidate) as Movie);
     });
     callback(list, snap.metadata.fromCache);
   }, (err) => {
@@ -404,21 +407,92 @@ export function subscribeToCustomMovies(
 
 const CATALOG_MIGRATION_DOC_ID = 'naijareel-migration-all-nigerian-titles-v1';
 
+export interface PurgeResult {
+  totalScanned: number;
+  purgedCount: number;
+  preservedCount: number;
+  purgedTitles: string[];
+}
+
+/**
+ * Automatic Non-Nigerian Movie Purge:
+ * Fetches all documents currently stored in the 'custom_movies' Firestore collection,
+ * evaluates their metadata against strict Nigerian criteria, and automatically deletes
+ * any document where origin_country does not include 'NG' or where non-Nigerian titles
+ * (such as Wallace & Gromit, 29th Street, Baby Steps, etc.) were imported.
+ */
+export async function purgeNonNigerianMoviesFromFirestore(
+  onProgress?: (progress: { scanned: number; purged: number }) => void
+): Promise<PurgeResult> {
+  try {
+    const movieCollection = collection(db, 'custom_movies');
+    const snapshot = await getDocs(movieCollection);
+
+    const toDelete: Array<{ id: string; title: string }> = [];
+    let preservedCount = 0;
+
+    snapshot.forEach((docSnap) => {
+      if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
+      const data = docSnap.data();
+      const movieCandidate = { ...data, id: docSnap.id };
+
+      if (!isNigerianMovie(movieCandidate)) {
+        toDelete.push({ id: docSnap.id, title: String(data.title || docSnap.id) });
+      } else {
+        preservedCount++;
+      }
+    });
+
+    const totalScanned = snapshot.size;
+    let purgedCount = 0;
+    const purgedTitles: string[] = [];
+
+    // Delete in safe chunks of 350 (Firestore limit is 500 ops per writeBatch)
+    const chunkSize = 350;
+    for (let i = 0; i < toDelete.length; i += chunkSize) {
+      const chunk = toDelete.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      for (const item of chunk) {
+        batch.delete(doc(db, 'custom_movies', item.id));
+        purgedTitles.push(item.title);
+      }
+      await batch.commit();
+      purgedCount += chunk.length;
+      onProgress?.({ scanned: totalScanned, purged: purgedCount });
+    }
+
+    console.info(`[Purge] Scanned ${totalScanned} movies: purged ${purgedCount} non-Nigerian movies, preserved ${preservedCount}.`);
+    return {
+      totalScanned,
+      purgedCount,
+      preservedCount,
+      purgedTitles
+    };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, 'custom_movies/purge');
+    throw err;
+  }
+}
+
 /**
  * One-time additive catalog migration:
+ * - purges any non-Nigerian movie leakage from the custom_movies collection;
  * - tags existing custom_movies documents that are missing the default collection;
  * - seeds the curated starter catalog into Firestore when its IDs are absent;
  * - stores a completion marker in custom_movies so later visitors skip the scan.
  */
 export async function initializeFirestoreMovieCatalog(
   seedMovies: Movie[]
-): Promise<{ migratedCount: number; seededCount: number; skipped: boolean }> {
+): Promise<{ migratedCount: number; seededCount: number; skipped: boolean; purgedCount: number }> {
   const migrationRef = doc(db, 'custom_movies', CATALOG_MIGRATION_DOC_ID);
 
   try {
+    // Automatically purge non-Nigerian movies
+    const purgeResult = await purgeNonNigerianMoviesFromFirestore();
+
     const migrationSnapshot = await getDoc(migrationRef);
     if (migrationSnapshot.exists()) {
-      return { migratedCount: 0, seededCount: 0, skipped: true };
+      return { migratedCount: 0, seededCount: 0, skipped: true, purgedCount: purgeResult.purgedCount };
     }
 
     const movieCollection = collection(db, 'custom_movies');
@@ -430,9 +504,12 @@ export async function initializeFirestoreMovieCatalog(
 
     snapshot.forEach((movieSnapshot) => {
       if (movieSnapshot.id === CATALOG_MIGRATION_DOC_ID) return;
+      const data = movieSnapshot.data();
+      const movieCandidate = { ...data, id: movieSnapshot.id };
+      if (!isNigerianMovie(movieCandidate)) return;
+
       existingIds.add(movieSnapshot.id);
 
-      const data = movieSnapshot.data();
       const hasDefaultTag = Array.isArray(data.collections) &&
         data.collections.some((tag: unknown) => typeof tag === 'string' && tag.trim() === DEFAULT_MOVIE_COLLECTION);
       if (!hasDefaultTag) {
@@ -446,6 +523,7 @@ export async function initializeFirestoreMovieCatalog(
 
     for (const seedMovie of seedMovies) {
       if (existingIds.has(seedMovie.id)) continue;
+      if (!isNigerianMovie(seedMovie)) continue;
       writes.push({
         ref: doc(db, 'custom_movies', seedMovie.id),
         payload: sanitizeAndTagMovie({
@@ -471,10 +549,11 @@ export async function initializeFirestoreMovieCatalog(
       migration: 'all-nigerian-titles-v1',
       migratedCount,
       seededCount,
+      purgedCount: purgeResult.purgedCount,
       completedAt: serverTimestamp()
     });
 
-    return { migratedCount, seededCount, skipped: false };
+    return { migratedCount, seededCount, skipped: false, purgedCount: purgeResult.purgedCount };
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'custom_movies/catalog-migration');
     throw err;
@@ -485,6 +564,10 @@ export async function initializeFirestoreMovieCatalog(
  * Save new or modified movie directly to Firebase Firestore
  */
 export async function saveFirestoreCustomMovie(movie: Movie, userId?: string): Promise<Movie> {
+  if (!isNigerianMovie(movie)) {
+    throw new Error(`Movie "${movie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  }
+
   const movieRef = doc(db, 'custom_movies', movie.id);
   const currentUid = userId || auth.currentUser?.uid || 'community-contributor';
   try {
@@ -514,14 +597,18 @@ export async function saveMultipleFirestoreMovies(
   signal?: AbortSignal
 ): Promise<number> {
   if (!movies || movies.length === 0) return 0;
+  // Strictly filter out any movie that does not meet Nigerian criteria
+  const validMovies = movies.filter(isNigerianMovie);
+  if (validMovies.length === 0) return 0;
+
   let savedCount = 0;
   const currentUid = userId || auth.currentUser?.uid || 'community-sync';
 
   // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
   const chunkSize = 350;
-  for (let i = 0; i < movies.length; i += chunkSize) {
+  for (let i = 0; i < validMovies.length; i += chunkSize) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    const chunk = movies.slice(i, i + chunkSize);
+    const chunk = validMovies.slice(i, i + chunkSize);
     try {
       const batch = writeBatch(db);
       for (const movie of chunk) {
@@ -560,6 +647,10 @@ export async function saveMultipleFirestoreMovies(
  * Update an existing movie directly in Firebase Firestore with user identity & timestamp
  */
 export async function updateFirestoreMovie(movie: Movie, userId?: string): Promise<Movie> {
+  if (!isNigerianMovie(movie)) {
+    throw new Error(`Movie "${movie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  }
+
   const currentUid = userId || auth.currentUser?.uid || 'community-editor';
   const movieRef = doc(db, 'custom_movies', movie.id);
   try {
@@ -580,8 +671,13 @@ export async function updateFirestoreMovie(movie: Movie, userId?: string): Promi
 }
 
 export async function deleteFirestoreCustomMovie(movieId: string): Promise<void> {
-  console.warn(`Movie deletion is disabled. The catalogue operates strictly in Add-Only Mode. Cannot delete movie: ${movieId}`);
-  throw new Error('Movie deletion is disabled. The NaijaReel registry operates strictly in Add-Only Mode.');
+  const movieRef = doc(db, 'custom_movies', movieId);
+  try {
+    await deleteDoc(movieRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `custom_movies/${movieId}`);
+    throw err;
+  }
 }
 
 /**

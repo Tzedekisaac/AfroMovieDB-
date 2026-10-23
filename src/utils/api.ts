@@ -1,7 +1,26 @@
 import { Movie, Era, StreamingPlatform, CastMember, PersonProfileData, UserTrackedItem, RecommendationItem } from '../types';
-import { saveMultipleFirestoreMovies } from '../lib/firestoreService';
+import { saveMultipleFirestoreMovies, purgeNonNigerianMoviesFromFirestore } from '../lib/firestoreService';
 import { normalizeMovieCollections } from './movieCollections';
 import { sanitizeAndTagMovie } from './sanitizeAndTagMovie';
+import {
+  isNigerianMovie,
+  parseSpokenLanguages,
+  extractOriginCountries,
+  KNOWN_FOREIGN_TITLES_LOWER,
+  NIGERIAN_ORIGIN_COUNTRY,
+  NIGERIAN_LANGUAGES,
+  NIGERIAN_INDIGENOUS_LANGUAGES
+} from './nigerianMovieValidator';
+
+export {
+  isNigerianMovie,
+  parseSpokenLanguages,
+  extractOriginCountries,
+  KNOWN_FOREIGN_TITLES_LOWER,
+  NIGERIAN_ORIGIN_COUNTRY,
+  NIGERIAN_LANGUAGES,
+  NIGERIAN_INDIGENOUS_LANGUAGES
+};
 
 export const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
 export const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
@@ -261,7 +280,9 @@ export async function searchMoviesOnline(
       }
     }
 
-    const formatted = results.map((item: any) => sanitizeCandidate(item, cleanQuery));
+    // Strictly filter out any foreign movies from search results
+    const filteredResults = results.filter((item: any) => isNigerianMovie(item));
+    const formatted = filteredResults.map((item: any) => sanitizeCandidate(item, cleanQuery));
     if (formatted.length > 0) {
       setCachedItem(cacheKey, formatted, SEARCH_TTL_MS);
     }
@@ -444,7 +465,7 @@ export function sanitizeMovie(movie: any): Movie {
       directorAvatarUrl: '',
       leadCast: [{ actor: 'Nollywood Cast Ensemble', role: 'Main Cast', avatarUrl: '' }],
       genres: ['Drama'],
-      languages: ['English', 'Nigerian Pidgin'],
+      languages: ['English'],
       era: 'Modern Global Era (2019-Present)',
       runtimeMinutes: 105,
       rating: 7.8,
@@ -546,16 +567,8 @@ export function sanitizeMovie(movie: any): Movie {
   }
   genres = Array.from(new Set(genres)).slice(0, 4);
 
-  // 8. Languages
-  let languages: string[] = ['English', 'Nigerian Pidgin'];
-  if (Array.isArray(movie.languages) && movie.languages.length > 0) {
-    const validLangs = movie.languages
-      .map((l: any) => String(l || '').trim())
-      .filter((l: string) => l.length > 0);
-    if (validLangs.length > 0) {
-      languages = Array.from(new Set(validLangs));
-    }
-  }
+  // 8. Languages (accurately parsed from metadata; defaults to English without hardcoded injections)
+  const languages = parseSpokenLanguages(movie);
 
   // 9. Runtime
   let runtimeMinutes = 105;
@@ -734,25 +747,25 @@ export async function discoverNigerianMovies(
       urls.push(urlRelease);
     }
 
-    // Endpoint 3: Indigenous language Nollywood cinema (Yoruba, Igbo, Hausa, Nigerian Pidgin)
-    let urlLang = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_original_language=yo|ig|ha|pcm&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
+    // Endpoint 3: Indigenous language Nollywood cinema (with_origin_country=NG and Nigerian indigenous languages)
+    let urlLang = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&with_original_language=yo|ig|ha|pcm&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlLang += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlLang += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlLang);
 
-    // Endpoint 4: English-language films explicitly associated with Nigeria.
+    // Endpoint 4: English-language films explicitly associated with Nigeria (with_origin_country=NG).
     let urlNigerianEnglish = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&with_original_language=en&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlNigerianEnglish += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlNigerianEnglish += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlNigerianEnglish);
 
-    // Endpoint 5: TMDb Nollywood keyword tags (207317: Nollywood, 263548: Nigerian Cinema)
-    let urlKeyword = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_keywords=207317|263548&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
+    // Endpoint 5: TMDb Nollywood keyword tags strictly with with_origin_country=NG (207317: Nollywood, 263548: Nigerian Cinema)
+    let urlKeyword = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&with_keywords=207317|263548&sort_by=${sortBy}&page=${requestedPage}&include_adult=false`;
     if (dateRange?.gte) urlKeyword += `&primary_release_date.gte=${dateRange.gte}`;
     if (dateRange?.lte) urlKeyword += `&primary_release_date.lte=${dateRange.lte}`;
     urls.push(urlKeyword);
 
-    // Search fallbacks also run during era sweeps; results are filtered to the requested dates below.
+    // Search fallbacks also run during era sweeps; results are filtered to verified Nigerian movies below.
     if (requestedPage <= 5) {
       urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${requestedPage}&include_adult=false`);
       urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false`);
@@ -795,7 +808,10 @@ export async function discoverNigerianMovies(
       }
     }
 
-    const candidates = Array.from(uniqueMap.values()).map((item: any) => 
+    // Strictly validate against foreign leakage
+    const verifiedItems = Array.from(uniqueMap.values()).filter((item: any) => isNigerianMovie(item));
+
+    const candidates = verifiedItems.map((item: any) => 
       sanitizeCandidate(item, item.title || 'Nollywood Film')
     );
 
@@ -869,12 +885,14 @@ export async function pullMovieDetailsFromOnline(
   let trailerYoutubeId = 'v8wIe7_xK3U'; // Default trailer fallback
   let genres: string[] = [];
   let tagline = 'A compelling Nigerian cinematic story.';
+  let detailsData: any = null;
 
   try {
     const detailsUrl = `${TMDB_BASE_URL}/movie/${cleanCand.tmdbId}?api_key=${getActiveTmdbApiKey()}&append_to_response=credits,videos`;
     const res = await safeTmdbFetch(detailsUrl, 2, signal);
     if (res && res.ok) {
-      const d = await res.json();
+      detailsData = await res.json();
+      const d = detailsData;
       
       if (d.runtime) {
         runtime = Number(d.runtime) || 110;
@@ -960,6 +978,26 @@ export async function pullMovieDetailsFromOnline(
   }
 
   throwIfAborted(signal);
+
+  // Strict Nigerian verification: reject if neither detailsData nor candidate qualify as Nigerian
+  const candidateIsValid = isNigerianMovie(cleanCand);
+  const detailsIsValid = detailsData ? isNigerianMovie(detailsData) : false;
+  if (!candidateIsValid && !detailsIsValid) {
+    throw new Error(`Movie "${cleanCand.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  }
+
+  // Parse spoken languages directly from TMDb metadata, defaulting to English if missing
+  const parsedLanguages = detailsData
+    ? parseSpokenLanguages(detailsData)
+    : parseSpokenLanguages(cleanCand);
+
+  // Extract origin countries
+  const extractedCountries = detailsData
+    ? extractOriginCountries(detailsData)
+    : extractOriginCountries(cleanCand);
+  const originCountry = extractedCountries.length > 0 ? extractedCountries : ['NG'];
+  const originalLanguage = String(detailsData?.original_language || cleanCand.language || 'en').trim().toLowerCase();
+
   // Fallback genres if empty
   if (genres.length === 0) {
     if (cleanCand.genreIds && cleanCand.genreIds.length > 0) {
@@ -1006,7 +1044,9 @@ export async function pullMovieDetailsFromOnline(
       { actor: 'Nollywood Cast Ensemble', role: 'Main Cast', avatarUrl: '' }
     ],
     genres: genres.length > 0 ? genres : ['Drama'],
-    languages: ['English', 'Nigerian Pidgin', 'Yoruba'],
+    languages: parsedLanguages,
+    originCountry,
+    originalLanguage,
     era: era || determineEra(cleanCand.releaseYear),
     runtimeMinutes: Number(runtime) || 105,
     rating: typeof cleanCand.rating === 'number' && cleanCand.rating > 0 ? cleanCand.rating : 8.0,
@@ -1267,8 +1307,8 @@ export async function bulkSyncNigerianNewReleases(
       if (syncedMovies.length >= maxMovies) break;
 
       const candidate = sanitizeCandidate(rawCandidate);
-      // Skip invalid items
-      if (!candidate.title || !candidate.posterUrl) continue;
+      // Skip invalid or non-Nigerian items
+      if (!candidate.title || !candidate.posterUrl || !isNigerianMovie(candidate)) continue;
 
       // Skip existing films while allowing distinct remakes and alternate TMDb records.
       if (isDuplicateMovie(candidate, currentPool)) {
@@ -1424,6 +1464,16 @@ export async function runDeepHistoricalSweep(
   };
 
   try {
+    // Automatic purge of any non-Nigerian movie leakage in Firestore custom_movies
+    try {
+      const purgeResult = await purgeNonNigerianMoviesFromFirestore();
+      if (purgeResult.purgedCount > 0) {
+        console.info(`[Sweep Routine] Automatically purged ${purgeResult.purgedCount} non-Nigerian movies.`);
+      }
+    } catch (purgeErr) {
+      console.warn('Non-Nigerian movie purge before sweep warning:', purgeErr);
+    }
+
     for (const era of erasToScan) {
       throwIfAborted(signal);
       currentDecade = era.label;
@@ -1451,11 +1501,12 @@ export async function runDeepHistoricalSweep(
           for (const rawCandidate of candidates) {
             throwIfAborted(signal);
             const candidate = sanitizeCandidate(rawCandidate);
-            if (!candidate.title || isDuplicateMovie(candidate, pool)) continue;
+            if (!candidate.title || !isNigerianMovie(candidate) || isDuplicateMovie(candidate, pool)) continue;
 
             try {
               const rawMovie = await pullMovieDetailsFromOnline(candidate, false, signal);
               throwIfAborted(signal);
+              if (!isNigerianMovie(rawMovie)) continue;
               const fullMovie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
               newImported.push(fullMovie);
               pool.push(fullMovie);
@@ -1486,10 +1537,11 @@ export async function runDeepHistoricalSweep(
           for (const rawCand of searchCandidates.slice(0, 3)) {
             throwIfAborted(signal);
             const cand = sanitizeCandidate(rawCand);
-            if (!cand.title || isDuplicateMovie(cand, pool)) continue;
+            if (!cand.title || !isNigerianMovie(cand) || isDuplicateMovie(cand, pool)) continue;
 
             const rawMovie = await pullMovieDetailsFromOnline(cand, false, signal);
             throwIfAborted(signal);
+            if (!isNigerianMovie(rawMovie)) continue;
             const fullMovie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
             newImported.push(fullMovie);
             pool.push(fullMovie);
@@ -1505,7 +1557,9 @@ export async function runDeepHistoricalSweep(
     if (!signal?.aborted) throw error;
   }
 
-  const finalSanitized = newImported.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
+  const finalSanitized = newImported
+    .filter(isNigerianMovie)
+    .map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
   if (signal?.aborted) {
     const summary = `Historical sweep stopped. ${finalSanitized.length} classic films were found; no Firestore save was started.`;
     onProgress?.({
@@ -1560,9 +1614,15 @@ export async function checkAndRunDailySync(
       }
     }
 
+    // Automatic cleanup of any non-Nigerian movie leakage in custom_movies
+    try {
+      await purgeNonNigerianMoviesFromFirestore();
+    } catch {}
+
     // Perform background sync (fetching up to 24 fresh Nigerian releases with strict deduplication)
     const freshMovies = await bulkSyncNigerianNewReleases(24, onProgress, existingMovies, 15);
-    const sanitizedFresh = freshMovies.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
+    const verifiedFresh = freshMovies.filter(isNigerianMovie);
+    const sanitizedFresh = verifiedFresh.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
 
     // Direct real-time batch write to Firestore custom_movies collection
     if (sanitizedFresh.length > 0) {
