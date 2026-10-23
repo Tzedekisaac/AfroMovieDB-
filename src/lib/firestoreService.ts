@@ -380,11 +380,11 @@ export async function deleteFirestoreReview(reviewId: string) {
  * Stored in collection 'custom_movies'
  */
 export function subscribeToCustomMovies(
-  callback: (movies: Movie[]) => void,
+  callback: (movies: Movie[], fromCache: boolean) => void,
   onError?: (error: Error) => void
 ) {
   const col = collection(db, 'custom_movies');
-  return onSnapshot(col, (snap) => {
+  return onSnapshot(col, { includeMetadataChanges: true }, (snap) => {
     const list: Movie[] = [];
     snap.forEach((docSnap) => {
       if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
@@ -394,7 +394,7 @@ export function subscribeToCustomMovies(
         id: docSnap.id
       }) as Movie);
     });
-    callback(list);
+    callback(list, snap.metadata.fromCache);
   }, (err) => {
     handleFirestoreError(err, OperationType.LIST, 'custom_movies');
     console.warn('Custom movies listener warning:', err);
@@ -402,7 +402,7 @@ export function subscribeToCustomMovies(
   });
 }
 
-const CATALOG_MIGRATION_DOC_ID = '__naijareel_migration_all_nigerian_titles_v1__';
+const CATALOG_MIGRATION_DOC_ID = 'naijareel-migration-all-nigerian-titles-v1';
 
 /**
  * One-time additive catalog migration:

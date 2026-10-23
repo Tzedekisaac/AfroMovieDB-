@@ -241,17 +241,27 @@ export default function App() {
   // Listen to Firestore Real-time Custom Movies (the sole source for the displayed catalog).
   useEffect(() => {
     let isMounted = true;
-    const unsubscribe = subscribeToCustomMovies((cloudMovies) => {
+    const snapshotTimeout = window.setTimeout(() => {
+      if (!isMounted) return;
+      setCatalogLoadError('Firestore has not returned a live catalog snapshot. Enable Cloud Firestore for the selected Firebase project and check its database access rules.');
+      setIsCatalogReady(true);
+    }, 15000);
+
+    const unsubscribe = subscribeToCustomMovies((cloudMovies, fromCache) => {
       const sanitizedCloud = (cloudMovies || []).map((movie) => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
       setMoviesList(sanitizedCloud);
-      setIsCatalogReady(true);
-      setCatalogLoadError(null);
+      if (!fromCache) {
+        window.clearTimeout(snapshotTimeout);
+        setIsCatalogReady(true);
+        setCatalogLoadError(null);
+      }
       setSelectedMovie(curr => {
         if (!curr) return null;
         const match = sanitizedCloud.find(m => m.id === curr.id);
         return match || curr;
       });
     }, (error) => {
+      window.clearTimeout(snapshotTimeout);
       setCatalogLoadError(error.message || 'Could not connect to the Firestore movie catalog.');
       setIsCatalogReady(true);
     });
@@ -274,6 +284,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      window.clearTimeout(snapshotTimeout);
       unsubscribe();
     };
   }, []);
@@ -780,7 +791,7 @@ export default function App() {
 
   // Automated daily background sync begins only after Firestore's initial read, seeding, and auth check.
   useEffect(() => {
-    if (!isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || dailySyncStarted.current) {
+    if (!isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || catalogLoadError || dailySyncStarted.current) {
       return;
     }
 
@@ -825,7 +836,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [currentUser, isAuthReady, isCatalogReady, isCatalogInitializationComplete]);
+  }, [currentUser, isAuthReady, isCatalogReady, isCatalogInitializationComplete, catalogLoadError]);
 
   const handleSignOut = async () => {
     try {
