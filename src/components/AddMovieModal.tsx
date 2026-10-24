@@ -12,7 +12,8 @@ import {
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
   WebMovieCandidate, 
-  POPULAR_NIGERIAN_WEB_SUGGESTIONS 
+  POPULAR_NIGERIAN_WEB_SUGGESTIONS,
+  isNigerianMovie 
 } from '../services/moviePuller';
 
 interface AddMovieModalProps {
@@ -80,10 +81,11 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
 
     try {
       const results = await searchMoviesOnline(q);
-      if (results.length === 0) {
-        setSearchError(`No movies found online for "${q}". Try searching another title or use the Manual tab.`);
+      const verifiedResults = (results || []).filter((cand) => isNigerianMovie(cand));
+      if (verifiedResults.length === 0) {
+        setSearchError(`No verified Nollywood movies found online for "${q}". Hollywood, foreign, and non-Nigerian titles are strictly excluded. Try searching a Nigerian title (e.g. "The Black Book", "King of Boys", "Lionheart") or use the Manual tab.`);
       }
-      setCandidates(results);
+      setCandidates(verifiedResults);
     } catch (err: any) {
       setSearchError('Failed to pull from internet movie servers. Check your connection or add manually.');
     } finally {
@@ -93,13 +95,25 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
 
   // Inspect and pull details for candidate
   const handleSelectCandidate = async (cand: WebMovieCandidate) => {
+    if (!isNigerianMovie(cand)) {
+      setSearchError(`Movie "${cand.title}" does not meet Nollywood origin requirements and cannot be added.`);
+      return;
+    }
     setSelectedCandidate(cand);
     setIsPullingDetails(true);
+    setSearchError(null);
     try {
       const fullMovie = await pullMovieDetailsFromOnline(cand);
+      if (!isNigerianMovie(fullMovie)) {
+        setSearchError(`Movie "${fullMovie.title}" does not meet Nigerian origin country or language requirements.`);
+        setPreviewMovie(null);
+        setSelectedCandidate(null);
+        return;
+      }
       setPreviewMovie(fullMovie);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setSearchError(e?.message || 'Failed to pull movie details.');
     } finally {
       setIsPullingDetails(false);
     }
@@ -331,13 +345,18 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
               )}
 
               {/* Candidate Results Grid */}
-              {candidates.length > 0 && (
+              {candidates.filter(isNigerianMovie).length > 0 && (
                 <div className="space-y-3">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    Online Database Matches ({candidates.length})
-                  </h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Online Nollywood Matches ({candidates.filter(isNigerianMovie).length})
+                    </h3>
+                    <span className="text-[11px] text-emerald-400 font-medium">
+                      Origin: Nigeria (NG) Strictly Verified
+                    </span>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-1">
-                    {candidates.map((cand) => {
+                    {candidates.filter(isNigerianMovie).map((cand) => {
                       const isSelected = selectedCandidate?.tmdbId === cand.tmdbId;
                       return (
                         <div

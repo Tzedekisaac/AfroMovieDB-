@@ -107,6 +107,8 @@ export interface WebMovieCandidate {
   genreIds?: number[];
   language?: string;
   popularity?: number;
+  originCountry?: string[];
+  originalLanguage?: string;
 }
 
 // TMDb Genre ID mapping
@@ -243,7 +245,11 @@ export async function searchMoviesOnline(
   if (!forceRefresh) {
     const cached = getCachedItem<WebMovieCandidate[]>(cacheKey);
     if (cached) {
-      return cached;
+      // Re-verify cached items so no foreign titles linger in local storage
+      const verified = cached.filter(cand => isNigerianMovie(cand));
+      if (verified.length > 0) {
+        return verified;
+      }
     }
   }
 
@@ -252,17 +258,17 @@ export async function searchMoviesOnline(
   let results: any[] = [];
 
   try {
-    // 1. Direct raw title query first (essential for classic Nollywood titles like Saworoide, Domitilla, Karishika, Issakaba)
-    const rawUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(cleanQuery)}&include_adult=false&language=en-US&page=1`;
+    // 1. Direct raw title query strictly with with_origin_country=NG
+    const rawUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(cleanQuery)}&with_origin_country=NG&include_adult=false&language=en-US&page=1`;
     const rawRes = await safeTmdbFetch(rawUrl, 2, signal);
     if (rawRes && rawRes.ok) {
       const rawData = await rawRes.json();
       results = rawData.results || [];
     }
 
-    // 2. If nothing found, search with 'Nollywood' appended to avoid foreign title collisions
+    // 2. If nothing found, search with 'Nollywood' appended with with_origin_country=NG
     if (results.length === 0 && !lowerQuery.includes('nollywood')) {
-      const fallbackUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nollywood`)}&include_adult=false&language=en-US&page=1`;
+      const fallbackUrl = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nollywood`)}&with_origin_country=NG&include_adult=false&language=en-US&page=1`;
       const fallbackRes = await safeTmdbFetch(fallbackUrl, 2, signal);
       if (fallbackRes && fallbackRes.ok) {
         const fallbackData = await fallbackRes.json();
@@ -270,9 +276,9 @@ export async function searchMoviesOnline(
       }
     }
 
-    // 3. Fallback with 'Nigerian movie'
+    // 3. Fallback with 'Nigerian movie' with with_origin_country=NG
     if (results.length === 0 && !lowerQuery.includes('nigerian')) {
-      const fallbackUrl2 = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nigerian movie`)}&include_adult=false&language=en-US&page=1`;
+      const fallbackUrl2 = `${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(`${cleanQuery} Nigerian movie`)}&with_origin_country=NG&include_adult=false&language=en-US&page=1`;
       const fallbackRes2 = await safeTmdbFetch(fallbackUrl2, 2, signal);
       if (fallbackRes2 && fallbackRes2.ok) {
         const fallbackData2 = await fallbackRes2.json();
@@ -280,8 +286,34 @@ export async function searchMoviesOnline(
       }
     }
 
+    // TMDb search/movie does not include origin_country in list items.
+    // Enrich top candidate results in parallel with origin_country and production_countries from details
+    const candidateSlice = results.slice(0, 10);
+    const enrichedResults = await Promise.all(
+      candidateSlice.map(async (item: any) => {
+        if (!item || !item.id) return item;
+        try {
+          const detailUrl = `${TMDB_BASE_URL}/movie/${item.id}?api_key=${apiKey}&with_origin_country=NG`;
+          const detailRes = await safeTmdbFetch(detailUrl, 1, signal);
+          if (detailRes && detailRes.ok) {
+            const detailData = await detailRes.json();
+            return {
+              ...item,
+              origin_country: detailData.origin_country,
+              production_countries: detailData.production_countries,
+              original_language: detailData.original_language || item.original_language,
+              spoken_languages: detailData.spoken_languages
+            };
+          }
+        } catch {
+          // If probe fails, continue with raw item
+        }
+        return item;
+      })
+    );
+
     // Strictly filter out any foreign movies from search results
-    const filteredResults = results.filter((item: any) => isNigerianMovie(item));
+    const filteredResults = enrichedResults.filter((item: any) => isNigerianMovie(item));
     const formatted = filteredResults.map((item: any) => sanitizeCandidate(item, cleanQuery));
     if (formatted.length > 0) {
       setCachedItem(cacheKey, formatted, SEARCH_TTL_MS);
@@ -428,6 +460,13 @@ export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood 
       ? Math.floor(item.tmdbId)
       : Math.floor(Math.random() * 900000) + 100000;
 
+  const originCountry = extractOriginCountries(item);
+  const originalLanguage = typeof item.original_language === 'string' && item.original_language.trim()
+    ? item.original_language.trim().toLowerCase()
+    : typeof item.originalLanguage === 'string' && item.originalLanguage.trim()
+      ? item.originalLanguage.trim().toLowerCase()
+      : language;
+
   return {
     tmdbId,
     title: rawTitle,
@@ -440,7 +479,9 @@ export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood 
     ratingCount,
     genreIds,
     language,
-    popularity
+    popularity,
+    originCountry: originCountry.length > 0 ? originCountry : undefined,
+    originalLanguage
   };
 }
 
@@ -767,8 +808,8 @@ export async function discoverNigerianMovies(
 
     // Search fallbacks also run during era sweeps; results are filtered to verified Nigerian movies below.
     if (requestedPage <= 5) {
-      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${requestedPage}&include_adult=false`);
-      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false`);
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nollywood&page=${requestedPage}&include_adult=false&with_origin_country=NG`);
+      urls.push(`${TMDB_BASE_URL}/search/movie?api_key=${apiKey}&query=Nigerian%20movie&page=${requestedPage}&include_adult=false&with_origin_country=NG`);
     }
 
     const responses = await Promise.allSettled(urls.map(u => safeTmdbFetch(u, 2, signal)));
@@ -843,7 +884,7 @@ export async function fetchMovieCredits(
   }
 
   try {
-    const url = `${TMDB_BASE_URL}/movie/${tmdbId}/credits?api_key=${getActiveTmdbApiKey()}`;
+    const url = `${TMDB_BASE_URL}/movie/${tmdbId}/credits?api_key=${getActiveTmdbApiKey()}&with_origin_country=NG`;
     const res = await safeTmdbFetch(url, 2, signal);
     if (!res || !res.ok) return null;
     const data = await res.json();
@@ -873,7 +914,11 @@ export async function pullMovieDetailsFromOnline(
   if (!forceRefresh) {
     const cached = getCachedItem<Movie>(cacheKey);
     if (cached) {
-      return sanitizeMovie(cached);
+      if (isNigerianMovie(cached)) {
+        return sanitizeMovie(cached);
+      } else {
+        removeCachedItem(cacheKey);
+      }
     }
   }
 
@@ -888,7 +933,7 @@ export async function pullMovieDetailsFromOnline(
   let detailsData: any = null;
 
   try {
-    const detailsUrl = `${TMDB_BASE_URL}/movie/${cleanCand.tmdbId}?api_key=${getActiveTmdbApiKey()}&append_to_response=credits,videos`;
+    const detailsUrl = `${TMDB_BASE_URL}/movie/${cleanCand.tmdbId}?api_key=${getActiveTmdbApiKey()}&with_origin_country=NG&append_to_response=credits,videos`;
     const res = await safeTmdbFetch(detailsUrl, 2, signal);
     if (res && res.ok) {
       detailsData = await res.json();

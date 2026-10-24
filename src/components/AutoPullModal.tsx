@@ -8,7 +8,8 @@ import {
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
   WebMovieCandidate,
-  POPULAR_NIGERIAN_WEB_SUGGESTIONS 
+  POPULAR_NIGERIAN_WEB_SUGGESTIONS,
+  isNigerianMovie 
 } from '../services/moviePuller';
 
 interface AutoPullModalProps {
@@ -44,10 +45,11 @@ export const AutoPullModal: React.FC<AutoPullModalProps> = ({
 
     try {
       const results = await searchMoviesOnline(q);
-      if (!results || results.length === 0) {
-        setError(`No movies found for "${q}". Try searching another title like "Gangs of Lagos", "Shanty Town", or "King of Thieves".`);
+      const verifiedResults = (results || []).filter(cand => isNigerianMovie(cand));
+      if (!verifiedResults || verifiedResults.length === 0) {
+        setError(`No verified Nollywood movies found for "${q}". Hollywood and non-Nigerian titles are strictly excluded. Try searching a Nigerian title like "Gangs of Lagos", "Shanty Town", or "King of Thieves".`);
       } else {
-        setCandidates(results.slice(0, 6));
+        setCandidates(verifiedResults.slice(0, 6));
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to search movie databases.');
@@ -57,10 +59,18 @@ export const AutoPullModal: React.FC<AutoPullModalProps> = ({
   };
 
   const handlePullCandidate = async (candidate: WebMovieCandidate) => {
+    if (!isNigerianMovie(candidate)) {
+      setError(`Movie "${candidate.title}" does not meet Nollywood origin requirements.`);
+      return;
+    }
     setPullingId(candidate.tmdbId);
     setError(null);
     try {
       const fullMovie = await pullMovieDetailsFromOnline(candidate);
+      if (!isNigerianMovie(fullMovie)) {
+        setError(`Movie "${fullMovie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+        return;
+      }
       onMoviePulled(fullMovie);
       setSuccessMessage(`"${fullMovie.title}" (${fullMovie.releaseYear}) added to your catalogue!`);
       setTimeout(() => {
@@ -191,14 +201,19 @@ export const AutoPullModal: React.FC<AutoPullModalProps> = ({
           )}
 
           {/* Results list */}
-          {candidates.length > 0 && (
+          {candidates.filter(isNigerianMovie).length > 0 && (
             <div className="space-y-3 pt-2">
-              <span className="text-xs font-semibold text-slate-400">
-                Found {candidates.length} online results with official Google/TMDb artwork:
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-400">
+                  Found {candidates.filter(isNigerianMovie).length} verified Nollywood matches:
+                </span>
+                <span className="text-[11px] text-emerald-400 font-medium">
+                  Origin: Nigeria (NG) Verified
+                </span>
+              </div>
 
               <div className="space-y-2.5">
-                {candidates.map((cand) => {
+                {candidates.filter(isNigerianMovie).map((cand) => {
                   const isPulling = pullingId === cand.tmdbId;
                   const alreadyIn = existingTitles.some(t => t.toLowerCase() === cand.title.toLowerCase());
 

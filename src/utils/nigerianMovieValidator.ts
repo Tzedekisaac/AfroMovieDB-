@@ -68,44 +68,50 @@ export const KNOWN_FOREIGN_TITLES_LOWER = [
   '12 days of christmas',
   '12 gifts of christmas',
   'удачная охота',
-  '100 papiers'
+  '100 papiers',
+  'outrageous',
+  'captains outrageous',
+  'outrageous fortune',
+  'outrageous drops',
+  'outrageous request'
 ];
 
 /**
  * Normalizes an origin country array from diverse metadata representations
  * (e.g., TMDb origin_country strings, production_countries objects with iso_3166_1, or comma-separated strings).
+ * Aggregates all country sources across origin_country, production_countries, and country fields.
  */
 export function extractOriginCountries(movieOrItem: any): string[] {
   if (!movieOrItem || typeof movieOrItem !== 'object') return [];
 
-  const raw =
-    movieOrItem.originCountry ??
-    movieOrItem.origin_country ??
-    movieOrItem.production_countries ??
-    movieOrItem.productionCountries ??
-    movieOrItem.country ??
-    [];
+  const rawSources = [
+    movieOrItem.originCountry,
+    movieOrItem.origin_country,
+    movieOrItem.production_countries,
+    movieOrItem.productionCountries,
+    movieOrItem.country,
+    movieOrItem.countries
+  ].filter(Boolean);
 
-  if (Array.isArray(raw)) {
-    return raw
-      .map((c: any) => {
-        if (typeof c === 'string') return c.trim().toUpperCase();
-        if (c && typeof c === 'object') {
-          return String(c.iso_3166_1 || c.code || c.country_code || '').trim().toUpperCase();
+  const countries: string[] = [];
+
+  for (const raw of rawSources) {
+    if (Array.isArray(raw)) {
+      for (const c of raw) {
+        if (typeof c === 'string' && c.trim()) {
+          countries.push(c.trim().toUpperCase());
+        } else if (c && typeof c === 'object') {
+          const code = String(c.iso_3166_1 || c.code || c.country_code || '').trim().toUpperCase();
+          if (code) countries.push(code);
         }
-        return '';
-      })
-      .filter((c: string) => c.length > 0);
+      }
+    } else if (typeof raw === 'string') {
+      const parts = raw.split(/[,\s|]+/).map((s: string) => s.trim().toUpperCase()).filter(Boolean);
+      countries.push(...parts);
+    }
   }
 
-  if (typeof raw === 'string') {
-    return raw
-      .split(/[,\s|]+/)
-      .map((c: string) => c.trim().toUpperCase())
-      .filter(Boolean);
-  }
-
-  return [];
+  return Array.from(new Set(countries));
 }
 
 /**
