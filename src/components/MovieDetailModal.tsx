@@ -203,27 +203,34 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex justify-center p-2 sm:p-4 lg:p-6 animate-in fade-in duration-200">
+    <div 
+      id="movie-detail-modal-overlay"
+      className="fixed inset-0 z-50 w-full h-full overflow-y-auto bg-black/80 backdrop-blur-md flex justify-center p-4 sm:p-6 animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div 
         id="movie-detail-modal-container"
-        className="relative w-full max-w-4xl bg-[#0e131d] border border-slate-800 rounded-3xl overflow-hidden shadow-2xl text-slate-100 my-auto"
+        className="relative w-full max-w-4xl bg-[#0e131d] border border-slate-800 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl text-slate-100 my-auto min-h-0"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
         <button
           id="close-movie-detail-btn"
           onClick={onClose}
-          className="absolute top-4 right-4 z-20 p-2.5 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 backdrop-blur-md transition-all shadow-lg"
+          className="absolute top-4 right-4 z-20 p-2.5 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 backdrop-blur-md transition-all shadow-lg cursor-pointer"
           title="Close details"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Hero Backdrop Banner */}
-        <div className="relative h-64 sm:h-80 lg:h-96 w-full overflow-hidden bg-slate-950">
+        <div className="relative w-full overflow-hidden bg-slate-950 max-h-[35vh] sm:max-h-[50vh]">
           <img
-            src={movie.backdropUrl}
+            src={movie.backdropUrl || movie.posterUrl}
             alt={movie.title}
-            className="w-full h-full object-cover object-center"
+            className="w-full h-auto object-cover object-center max-h-[35vh] sm:max-h-[50vh]"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0e131d] via-[#0e131d]/60 to-transparent" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#0e131d] via-transparent to-transparent hidden sm:block" />
@@ -233,19 +240,31 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             <button
               id="modal-play-trailer-btn"
               onClick={() => onOpenTrailer(movie)}
-              className="group flex items-center gap-3 px-6 py-3 rounded-full bg-emerald-500/95 hover:bg-emerald-400 text-slate-950 font-bold shadow-2xl shadow-emerald-950/80 hover:scale-105 active:scale-95 transition-all"
+              className="group flex items-center gap-2.5 sm:gap-3 px-5 sm:px-6 py-2.5 sm:py-3 rounded-full bg-emerald-500/95 hover:bg-emerald-400 text-slate-950 font-bold shadow-2xl shadow-emerald-950/80 hover:scale-105 active:scale-95 transition-all cursor-pointer"
             >
-              <div className="w-8 h-8 rounded-full bg-slate-950 flex items-center justify-center">
-                <Play className="w-4 h-4 fill-emerald-400 text-emerald-400 ml-0.5" />
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-950 flex items-center justify-center">
+                <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-emerald-400 text-emerald-400 ml-0.5" />
               </div>
-              <span className="text-sm tracking-wide uppercase">Watch Official Trailer</span>
+              <span className="text-xs sm:text-sm tracking-wide uppercase">Watch Official Trailer</span>
             </button>
           </div>
+        </div>
 
-          {/* Bottom Floating Title Strip */}
-          <div className="absolute bottom-4 left-4 right-4 sm:left-6 sm:right-6 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+        {/* Title, Poster & Metadata Header */}
+        <div className="px-4 sm:px-6 lg:px-8 -mt-10 sm:-mt-16 relative z-10">
+          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
+            {/* Responsive Poster Scaling */}
+            <div className="w-24 sm:w-32 md:w-40 aspect-[2/3] rounded-2xl overflow-hidden bg-slate-950 border-2 border-slate-700/80 shadow-2xl shrink-0">
+              <img
+                src={movie.posterUrl || movie.backdropUrl}
+                alt={movie.title}
+                className="w-full h-auto object-cover max-h-[35vh] sm:max-h-[50vh]"
+              />
+            </div>
+
+            {/* Title & Metadata */}
+            <div className="flex-1 min-w-0 space-y-2 pb-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="px-2 py-0.5 text-xs font-semibold rounded bg-emerald-500 text-slate-950">
                   {movie.releaseYear}
                 </span>
@@ -267,27 +286,28 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 </p>
               )}
             </div>
+          </div>
 
-            {/* Actions: Edit (Authenticated Users Only), Watchlist and Share */}
-            <div className="flex items-center gap-2">
-              {currentUser && (
-                <button
-                  id="modal-edit-movie-btn"
-                  onClick={() => onOpenEdit && onOpenEdit(movie)}
-                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/50 hover:border-emerald-400 transition-all shadow-md group"
-                  title="Edit movie details in Firebase Firestore (Authenticated user permission)"
-                >
-                  <Pencil className="w-4 h-4 text-emerald-400 group-hover:text-slate-950 transition-colors" />
-                  <span>Edit Movie</span>
-                </button>
-              )}
+          {/* Action Bar with Clean Spacing */}
+          <div className="mt-5 mb-12 sm:mb-6">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-3 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-lg">
+              {/* Watch Trailer */}
+              <button
+                id="action-bar-play-trailer-btn"
+                onClick={() => onOpenTrailer(movie)}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-md active:scale-95 cursor-pointer"
+                title="Watch official trailer"
+              >
+                <Play className="w-4 h-4 fill-slate-950" />
+                <span>Watch Trailer</span>
+              </button>
 
               {/* Multi-Status Tracking Picker (Authenticated) or Auth-Gated Watchlist (Guest) */}
               {!currentUser ? (
                 <button
                   id="modal-toggle-watchlist-btn"
                   onClick={() => onOpenAuth ? onOpenAuth() : onToggleWatchlist(movie.id)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/50 cursor-pointer shadow-md"
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/50 cursor-pointer shadow-md"
                   title="Sign in to save to your watchlist"
                 >
                   <Bookmark className="w-4 h-4 text-amber-400" />
@@ -304,7 +324,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 <button
                   id="modal-toggle-watchlist-btn"
                   onClick={() => onToggleWatchlist(movie.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
                     isWatchlisted
                       ? 'bg-amber-500 text-slate-950 border-amber-400'
                       : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700'
@@ -343,32 +363,47 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 </div>
               )}
 
+              {/* Share */}
               <button
                 id="modal-share-btn"
                 onClick={handleShare}
-                className="p-2 sm:px-3.5 sm:py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors"
+                className="px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Share this movie"
               >
                 <Share2 className="w-4 h-4" />
-                <span className="hidden sm:inline">{copiedLink ? 'Copied Link!' : 'Share'}</span>
+                <span>{copiedLink ? 'Copied Link!' : 'Share'}</span>
               </button>
 
+              {/* Refresh */}
               <button
                 id="modal-refresh-movie-btn"
                 onClick={handleRefreshMovie}
                 disabled={isRefreshing}
-                className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Refresh movie details & credits from online TMDb registry"
               >
                 <RotateCw className={`w-4 h-4 text-emerald-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">{refreshNotice || 'Refresh'}</span>
+                <span>{refreshNotice || 'Refresh'}</span>
               </button>
+
+              {/* Edit Movie (Authenticated) */}
+              {currentUser && (
+                <button
+                  id="modal-edit-movie-btn"
+                  onClick={() => onOpenEdit && onOpenEdit(movie)}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/50 hover:border-emerald-400 transition-all shadow-md group cursor-pointer sm:ml-auto"
+                  title="Edit movie details in Firebase Firestore (Authenticated user permission)"
+                >
+                  <Pencil className="w-4 h-4 text-emerald-400 group-hover:text-slate-950 transition-colors" />
+                  <span>Edit Movie</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Content Body */}
-        <div className="p-4 sm:p-6 lg:p-8 space-y-8">
+        <div className="p-4 sm:p-6 lg:p-8 space-y-8 pb-16 sm:pb-10">
           
           {/* Authenticated Member Quick Edit Callout */}
           {currentUser && (

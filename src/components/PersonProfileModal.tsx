@@ -185,7 +185,7 @@ export const PersonProfileModal: React.FC<PersonProfileModalProps> = ({
   return (
     <div 
       id="person-profile-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-50 w-full h-full overflow-y-auto bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn"
       onClick={onClose}
     >
       <div 

@@ -219,7 +219,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex justify-center p-2 sm:p-4 lg:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 w-full h-full overflow-y-auto bg-black/80 backdrop-blur-md flex justify-center p-4 sm:p-6 animate-in fade-in duration-200">
       <div 
         id="edit-movie-modal-container"
         className="relative w-full max-w-3xl bg-[#0e131d] border border-slate-700/80 rounded-3xl overflow-hidden shadow-2xl text-slate-100 my-auto flex flex-col max-h-[92vh]"
