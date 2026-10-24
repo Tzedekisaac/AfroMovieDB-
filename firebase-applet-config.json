@@ -1,12 +1,12 @@
 {
-  "projectId": "peak-league-dmn89",
-  "appId": "1:993155845527:web:c9f7c71b5a429d91b4c8d2",
-  "apiKey": "AIzaSyACpfDVMZ8eLqnRPEFMkmz0SoynbwMY1WQ",
-  "authDomain": "peak-league-dmn89.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-naijareelnigeria-60d2ca35-b8e0-4d69-aa6d-4469a835ebd0",
-  "storageBucket": "peak-league-dmn89.firebasestorage.app",
-  "messagingSenderId": "993155845527",
+  "projectId": "naijareel-77079",
+  "appId": "1:954650311829:web:26462a135903d37db56f9c",
+  "apiKey": "AIzaSyD2C56QFD5tCnCew9oj-30_oL0nA8c2YWw",
+  "authDomain": "naijareel-77079.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "naijareel-77079.firebasestorage.app",
+  "messagingSenderId": "954650311829",
   "measurementId": "",
-  "oAuthClientId": "993155845527-e4g5j9nucjunruvpdmo3amgj0alln4n0.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

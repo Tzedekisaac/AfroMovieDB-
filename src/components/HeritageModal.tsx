@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Award, Sparkles, BookOpen, Film, Clapperboard, Globe2, Flame } from 'lucide-react';
-import { NOL_CULTURE_FACTS } from '../data/movies';
+import { NOL_CULTURE_FACTS } from '../data/heritage';
 
 interface HeritageModalProps {
   isOpen: boolean;

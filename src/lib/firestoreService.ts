@@ -8,6 +8,7 @@ import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, 
 import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
 import { isNigerianMovie, parseSpokenLanguages } from '../utils/nigerianMovieValidator';
+import { sanitizeMovie } from '../utils/api';
 
 export enum OperationType {
   CREATE = 'create',
@@ -36,8 +37,10 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const isOffline = errMsg.includes('offline') || errMsg.includes('Failed to get document because the client is offline');
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -52,7 +55,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (isOffline) {
+    console.warn('Firestore Offline Notice: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   return errInfo;
 }
 
@@ -388,14 +395,21 @@ export function subscribeToCustomMovies(
   return onSnapshot(col, { includeMetadataChanges: true }, (snap) => {
     const list: Movie[] = [];
     snap.forEach((docSnap) => {
-      if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
       const d = docSnap.data() as any;
-      const movieCandidate = { ...d, id: docSnap.id };
-      // Filter out any leaked non-Nigerian movies in real time
-      if (!isNigerianMovie(movieCandidate)) {
+      // Skip only internal migration or metadata markers
+      if (
+        docSnap.id === CATALOG_MIGRATION_DOC_ID ||
+        docSnap.id.startsWith('naijareel-migration') ||
+        docSnap.id.startsWith('_') ||
+        d?.documentType === 'catalog_migration'
+      ) {
         return;
       }
-      list.push(sanitizeAndTagMovie(movieCandidate) as Movie);
+
+      const movieCandidate = { ...d, id: docSnap.id };
+      // Map all documents with safe fallbacks for missing or optional fields
+      const movie = sanitizeAndTagMovie(sanitizeMovie(movieCandidate)) as Movie;
+      list.push(movie);
     });
     callback(list, snap.metadata.fromCache);
   }, (err) => {
@@ -468,7 +482,12 @@ export async function purgeNonNigerianMoviesFromFirestore(
       preservedCount,
       purgedTitles
     };
-  } catch (err) {
+  } catch (err: any) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (errorMsg.includes('offline') || errorMsg.includes('unavailable') || errorMsg.includes('Failed to get document')) {
+      console.info('Firestore is in offline mode; skipping non-Nigerian title purge until online.');
+      return { totalScanned: 0, purgedCount: 0, preservedCount: 0, purgedTitles: [] };
+    }
     handleFirestoreError(err, OperationType.DELETE, 'custom_movies/purge');
     throw err;
   }
@@ -476,24 +495,32 @@ export async function purgeNonNigerianMoviesFromFirestore(
 
 /**
  * One-time additive catalog migration:
+ * - verifies if migration marker is already completed (via cache or Firestore);
  * - purges any non-Nigerian movie leakage from the custom_movies collection;
  * - tags existing custom_movies documents that are missing the default collection;
  * - seeds the curated starter catalog into Firestore when its IDs are absent;
  * - stores a completion marker in custom_movies so later visitors skip the scan.
  */
 export async function initializeFirestoreMovieCatalog(
-  seedMovies: Movie[]
+  seedMovies: Movie[] = []
 ): Promise<{ migratedCount: number; seededCount: number; skipped: boolean; purgedCount: number }> {
   const migrationRef = doc(db, 'custom_movies', CATALOG_MIGRATION_DOC_ID);
 
   try {
-    // Automatically purge non-Nigerian movies
-    const purgeResult = await purgeNonNigerianMoviesFromFirestore();
+    // Check local storage quick cache or remote migration record first
+    const localFlag = typeof window !== 'undefined' ? localStorage.getItem(CATALOG_MIGRATION_DOC_ID) : null;
+    if (localFlag === 'completed') {
+      return { migratedCount: 0, seededCount: 0, skipped: true, purgedCount: 0 };
+    }
 
     const migrationSnapshot = await getDoc(migrationRef);
     if (migrationSnapshot.exists()) {
-      return { migratedCount: 0, seededCount: 0, skipped: true, purgedCount: purgeResult.purgedCount };
+      try { localStorage.setItem(CATALOG_MIGRATION_DOC_ID, 'completed'); } catch {}
+      return { migratedCount: 0, seededCount: 0, skipped: true, purgedCount: 0 };
     }
+
+    // Automatically purge non-Nigerian movies if needed
+    const purgeResult = await purgeNonNigerianMoviesFromFirestore();
 
     const movieCollection = collection(db, 'custom_movies');
     const snapshot = await getDocs(movieCollection);
@@ -553,8 +580,15 @@ export async function initializeFirestoreMovieCatalog(
       completedAt: serverTimestamp()
     });
 
+    try { localStorage.setItem(CATALOG_MIGRATION_DOC_ID, 'completed'); } catch {}
+
     return { migratedCount, seededCount, skipped: false, purgedCount: purgeResult.purgedCount };
-  } catch (err) {
+  } catch (err: any) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (errorMsg.includes('offline') || errorMsg.includes('unavailable') || errorMsg.includes('Failed to get document')) {
+      console.info('Firestore is in offline mode; catalog initialization deferred until connection is ready.');
+      return { migratedCount: 0, seededCount: 0, skipped: true, purgedCount: 0 };
+    }
     handleFirestoreError(err, OperationType.WRITE, 'custom_movies/catalog-migration');
     throw err;
   }

@@ -17,7 +17,6 @@ import {
   addFirestoreReview, 
   deleteFirestoreReview,
   subscribeToCustomMovies, 
-  initializeFirestoreMovieCatalog,
   saveFirestoreCustomMovie, 
   saveMultipleFirestoreMovies,
   updateFirestoreMovie 
@@ -31,7 +30,7 @@ import {
   HistoricalSweepProgress,
   sanitizeMovie
 } from './utils/api';
-import { NIGERIAN_MOVIES, INITIAL_REVIEWS } from './data/movies';
+import { INITIAL_REVIEWS } from './data/reviews';
 import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
 import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
 import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
@@ -238,21 +237,29 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore Real-time Custom Movies (the sole source for the displayed catalog).
+  // Listen to Firestore Real-time Custom Movies (the exclusive single source of truth for the displayed catalog).
   useEffect(() => {
     let isMounted = true;
     const snapshotTimeout = window.setTimeout(() => {
       if (!isMounted) return;
-      setCatalogLoadError('Firestore has not returned a live catalog snapshot. Enable Cloud Firestore for the selected Firebase project and check its database access rules.');
+      setMoviesList(curr => {
+        if (curr.length === 0) {
+          setCatalogLoadError('Firestore has not returned a live catalog snapshot. Enable Cloud Firestore for the selected Firebase project and check its database access rules.');
+        }
+        return curr;
+      });
       setIsCatalogReady(true);
+      setIsCatalogInitializationComplete(true);
     }, 15000);
 
     const unsubscribe = subscribeToCustomMovies((cloudMovies, fromCache) => {
+      // Direct rendering of all Firestore documents with safe fallbacks
       const sanitizedCloud = (cloudMovies || []).map((movie) => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
       setMoviesList(sanitizedCloud);
-      if (!fromCache) {
+      if (sanitizedCloud.length > 0 || !fromCache) {
         window.clearTimeout(snapshotTimeout);
         setIsCatalogReady(true);
+        setIsCatalogInitializationComplete(true);
         setCatalogLoadError(null);
       }
       setSelectedMovie(curr => {
@@ -262,25 +269,15 @@ export default function App() {
       });
     }, (error) => {
       window.clearTimeout(snapshotTimeout);
-      setCatalogLoadError(error.message || 'Could not connect to the Firestore movie catalog.');
-      setIsCatalogReady(true);
-    });
-
-    initializeFirestoreMovieCatalog(NIGERIAN_MOVIES)
-      .then(({ migratedCount, seededCount }) => {
-        if (migratedCount > 0 || seededCount > 0) {
-          console.info(`Firestore catalog initialized: ${migratedCount} movies tagged, ${seededCount} starter movies seeded.`);
+      setMoviesList(curr => {
+        if (curr.length === 0) {
+          setCatalogLoadError(error.message || 'Could not connect to the Firestore movie catalog.');
         }
-      })
-      .catch((error) => {
-        console.error('Could not initialize the Firestore movie catalog:', error);
-        if (isMounted) {
-          setCatalogLoadError(error instanceof Error ? error.message : 'Could not initialize the Firestore movie catalog.');
-        }
-      })
-      .finally(() => {
-        if (isMounted) setIsCatalogInitializationComplete(true);
+        return curr;
       });
+      setIsCatalogReady(true);
+      setIsCatalogInitializationComplete(true);
+    });
 
     return () => {
       isMounted = false;
