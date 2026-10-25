@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, getFirestore, Firestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, setLogLevel } from 'firebase/firestore';
 import firebaseConfigData from '../../firebase-applet-config.json';
 
 export const firebaseConfig = {
@@ -15,37 +15,15 @@ export const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Suppress non-critical backend reconnection notices in iframe/proxy environments
+// Suppress transient backend reconnection and offline notices in preview/iframe environment
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {}
 
-let firestoreDb: Firestore;
-try {
-  firestoreDb = initializeFirestore(
-    app,
-    {
-      experimentalForceLongPolling: true,
-    },
-    firebaseConfig.firestoreDatabaseId
-  );
-} catch {
-  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-}
+export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
 
-// Connection test
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Please check your Firebase configuration or network status.");
-    }
-  }
-}
-testConnection();
-
-export const db = firestoreDb;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

@@ -1,7 +1,7 @@
 import { 
   collection, doc, getDoc, setDoc, updateDoc, 
   deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, 
-  Timestamp, getDocFromServer, getDocs, writeBatch
+  Timestamp, getDocs, writeBatch
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types';
@@ -163,17 +163,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
   return sanitizeAndTagMovie(safeData);
 }
 
-// Test connection on boot per Firebase guidelines
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Firestore offline check: Please verify network connection or Firebase config.");
-    }
-  }
-}
-testConnection();
+
 
 /**
  * User Profile & Multi-Status Tracking Operations for a specific User
