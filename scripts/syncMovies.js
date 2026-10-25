@@ -158,22 +158,36 @@ function isNigerianMovie(item) {
  * Initialize Firebase Admin SDK
  */
 function initializeFirebase() {
-  if (admin.apps.length > 0) {
+  if (admin && Array.isArray(admin.apps) && admin.apps.length > 0) {
     return admin.firestore();
   }
 
-  const serviceAccountRaw =
-    process.env.FIREBASE_SERVICE_ACCOUNT ||
-    process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
-    process.env.GOOGLE_CREDENTIALS;
+  // Verify that required environment variables exist and are non-empty before checking properties
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  const firebaseConfig = process.env.FIREBASE_CONFIG;
+  const googleCredentials = process.env.GOOGLE_CREDENTIALS;
+  const googleAppCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
-  if (serviceAccountRaw) {
+  const rawCredentials = [serviceAccount, serviceAccountKey, firebaseConfig, googleCredentials].find(
+    (val) => typeof val === 'string' && val.trim().length > 0
+  );
+
+  const hasGoogleAppCredentials = typeof googleAppCredentials === 'string' && googleAppCredentials.trim().length > 0;
+
+  if (!rawCredentials && !hasGoogleAppCredentials) {
+    console.warn('Firebase environment credentials not set, skipping background sync execution.');
+    process.exit(0);
+  }
+
+  if (rawCredentials) {
     try {
       let parsed;
-      if (serviceAccountRaw.trim().startsWith('{')) {
-        parsed = JSON.parse(serviceAccountRaw);
+      const trimmed = rawCredentials.trim();
+      if (trimmed.startsWith('{')) {
+        parsed = JSON.parse(trimmed);
       } else {
-        const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf-8');
+        const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
         parsed = JSON.parse(decoded);
       }
       admin.initializeApp({
@@ -184,16 +198,24 @@ function initializeFirebase() {
       return admin.firestore();
     } catch (err) {
       console.warn(`[Firebase Admin] Warning: could not parse service account JSON: ${err.message}`);
+      console.warn('Firebase environment credentials not set, skipping background sync execution.');
+      process.exit(0);
     }
   }
 
-  // Fallback to application default credentials
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-    projectId: PROJECT_ID
-  });
-  console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
-  return admin.firestore();
+  // Fallback to application default credentials if configured
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      projectId: PROJECT_ID
+    });
+    console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
+    return admin.firestore();
+  } catch (err) {
+    console.warn(`[Firebase Admin] Could not initialize credentials: ${err.message}`);
+    console.warn('Firebase environment credentials not set, skipping background sync execution.');
+    process.exit(0);
+  }
 }
 
 /**
