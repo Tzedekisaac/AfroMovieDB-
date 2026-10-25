@@ -39,6 +39,7 @@ export interface FirestoreErrorInfo {
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMsg = error instanceof Error ? error.message : String(error);
   const isOffline = errMsg.includes('offline') || errMsg.includes('Failed to get document because the client is offline');
+  const isPermissionDenied = errMsg.includes('permission') || errMsg.includes('Missing or insufficient permissions');
   const errInfo: FirestoreErrorInfo = {
     error: errMsg,
     authInfo: {
@@ -57,6 +58,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
   if (isOffline) {
     console.warn('Firestore Offline Notice: ', JSON.stringify(errInfo));
+  } else if (isPermissionDenied && !auth.currentUser) {
+    console.warn('Firestore Unauthenticated Write Notice (ignoring background guest write attempt): ', path);
   } else {
     console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
@@ -438,6 +441,9 @@ export interface PurgeResult {
 export async function purgeNonNigerianMoviesFromFirestore(
   onProgress?: (progress: { scanned: number; purged: number }) => void
 ): Promise<PurgeResult> {
+  if (!auth.currentUser) {
+    return { totalScanned: 0, purgedCount: 0, preservedCount: 0, purgedTitles: [] };
+  }
   try {
     const movieCollection = collection(db, 'custom_movies');
     const snapshot = await getDocs(movieCollection);
@@ -602,8 +608,13 @@ export async function saveFirestoreCustomMovie(movie: Movie, userId?: string): P
     throw new Error(`Movie "${movie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
   }
 
+  const currentUid = userId || auth.currentUser?.uid;
+  if (!currentUid) {
+    console.info(`[Auth Notice] Skipping write for "${movie.title}": user must be signed in.`);
+    return movie;
+  }
+
   const movieRef = doc(db, 'custom_movies', movie.id);
-  const currentUid = userId || auth.currentUser?.uid || 'community-contributor';
   try {
     const preparedPayload = prepareMovieForFirestore({
       ...movie,
@@ -635,8 +646,13 @@ export async function saveMultipleFirestoreMovies(
   const validMovies = movies.filter(isNigerianMovie);
   if (validMovies.length === 0) return 0;
 
+  const currentUid = userId || auth.currentUser?.uid;
+  if (!currentUid) {
+    console.info('[Auth Notice] Skipping client batch write: user must be signed in.');
+    return 0;
+  }
+
   let savedCount = 0;
-  const currentUid = userId || auth.currentUser?.uid || 'community-sync';
 
   // Process in batches of 350 to stay safely under Firestore's 500 operation batch limit
   const chunkSize = 350;

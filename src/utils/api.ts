@@ -1337,7 +1337,8 @@ export async function bulkSyncNigerianNewReleases(
   maxMovies: number = 32,
   onProgress?: (syncedCount: number, total: number) => void,
   existingMovies: Movie[] = [],
-  maxPages: number = 15
+  maxPages: number = 15,
+  userId?: string
 ): Promise<Movie[]> {
   const syncedMovies: Movie[] = [];
   let page = 1;
@@ -1380,9 +1381,9 @@ export async function bulkSyncNigerianNewReleases(
   }
 
   const finalSynced = syncedMovies.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
-  if (finalSynced.length > 0) {
+  if (finalSynced.length > 0 && userId) {
     try {
-      await saveMultipleFirestoreMovies(finalSynced);
+      await saveMultipleFirestoreMovies(finalSynced, userId);
     } catch (err) {
       console.warn('Real-time batch write of fresh releases to Firestore custom_movies encountered an issue:', err);
     }
@@ -1645,7 +1646,8 @@ export async function runDeepHistoricalSweep(
  */
 export async function checkAndRunDailySync(
   existingMovies: Movie[] = [],
-  onProgress?: (syncedCount: number, total: number) => void
+  onProgress?: (syncedCount: number, total: number) => void,
+  userId?: string
 ): Promise<{ syncedMovies: Movie[]; isSyncPerformed: boolean }> {
   try {
     const lastSyncRaw = localStorage.getItem(LAST_RELEASE_SYNC_KEY);
@@ -1659,24 +1661,17 @@ export async function checkAndRunDailySync(
       }
     }
 
-    // Automatic cleanup of any non-Nigerian movie leakage in custom_movies
-    try {
-      await purgeNonNigerianMoviesFromFirestore();
-    } catch {}
+    // Automatic cleanup of any non-Nigerian movie leakage in custom_movies (if authorized)
+    if (userId) {
+      try {
+        await purgeNonNigerianMoviesFromFirestore();
+      } catch {}
+    }
 
     // Perform background sync (fetching up to 24 fresh Nigerian releases with strict deduplication)
-    const freshMovies = await bulkSyncNigerianNewReleases(24, onProgress, existingMovies, 15);
+    const freshMovies = await bulkSyncNigerianNewReleases(24, onProgress, existingMovies, 15, userId);
     const verifiedFresh = freshMovies.filter(isNigerianMovie);
     const sanitizedFresh = verifiedFresh.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
-
-    // Direct real-time batch write to Firestore custom_movies collection
-    if (sanitizedFresh.length > 0) {
-      try {
-        await saveMultipleFirestoreMovies(sanitizedFresh);
-      } catch (err) {
-        console.warn('Firestore batch write during daily sync encountered an issue:', err);
-      }
-    }
 
     // Save updated timestamp
     localStorage.setItem(LAST_RELEASE_SYNC_KEY, now.toString());

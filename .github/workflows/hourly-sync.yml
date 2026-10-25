@@ -1,0 +1,38 @@
+name: Hourly Nollywood Catalogue Sync
+
+on:
+  schedule:
+    # Runs at minute 0 of every hour (UTC)
+    - cron: '0 * * * *'
+  # Allows triggering the sync manually anytime from the GitHub Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: hourly-sync-pipeline
+  cancel-in-progress: false
+
+jobs:
+  sync-movies:
+    name: Sync Nigerian Movies from TMDb to Firestore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Execute Nollywood Movie Sync
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'naijareel-77079' }}
+        run: node scripts/syncMovies.js

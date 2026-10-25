@@ -786,9 +786,9 @@ export default function App() {
     }
   };
 
-  // Automated daily background sync begins only after Firestore's initial read, seeding, and auth check.
+  // Automated daily sync runs only for authenticated curators/users (hourly background sync is handled by GitHub Actions)
   useEffect(() => {
-    if (!isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || catalogLoadError || dailySyncStarted.current) {
+    if (!currentUser || !isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || catalogLoadError || dailySyncStarted.current) {
       return;
     }
 
@@ -802,18 +802,11 @@ export default function App() {
             setIsSyncingReleases(true);
             setSyncNotice(`Auto-syncing NaijaReel with fresh Nigerian releases (${count}/${total})...`);
           }
-        });
+        }, currentUser.uid);
 
         if (!isMounted) return;
 
         if (result.isSyncPerformed && result.syncedMovies.length > 0) {
-          // Direct real-time batch write to Firebase Firestore custom_movies collection
-          try {
-            await saveMultipleFirestoreMovies(result.syncedMovies, currentUser?.uid || 'community-sync');
-          } catch (err) {
-            console.warn('Direct Firestore batch write for auto-sync encountered an issue:', err);
-          }
-
           setSyncNotice(`NaijaReel automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
           setTimeout(() => {
             if (isMounted) setSyncNotice(null);
