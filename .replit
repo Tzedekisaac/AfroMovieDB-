@@ -7,7 +7,7 @@ channel = "stable-25_05"
 expertMode = true
 
 [[ports]]
-localPort = 5000
+localPort = 3000
 externalPort = 80
 
 [workflows]
@@ -29,7 +29,7 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run dev"
-waitForPort = 5000
+waitForPort = 3000
 
 [workflows.workflow.metadata]
 outputType = "webview"
