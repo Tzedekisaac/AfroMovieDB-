@@ -31,7 +31,6 @@ jobs:
 
       - name: Execute Nollywood Movie Sync
         env:
-          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'naijareel-77079' }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: node scripts/syncMovies.js

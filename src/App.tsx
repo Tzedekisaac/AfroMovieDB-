@@ -53,7 +53,7 @@ import { Footer } from './components/Footer';
 import { SiteInfoModal, type SiteInfoPage } from './components/SiteInfoModal';
 import { 
   Sparkles, Flame, Award, Film, Bookmark, 
-  RotateCcw, SlidersHorizontal, Search, Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown 
+  RotateCcw, SlidersHorizontal, Search, Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown, ArrowUp 
 } from 'lucide-react';
 
 const WATCHLIST_STORAGE_KEY = 'afromoviedb_watchlist_ids_v1';
@@ -138,8 +138,32 @@ export default function App() {
   const [isCancellingSweep, setIsCancellingSweep] = useState(false);
   const [sweepProgress, setSweepProgress] = useState<HistoricalSweepProgress | null>(null);
   const [showSweepPill, setShowSweepPill] = useState(true);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const sweepAbortController = useRef<AbortController | null>(null);
   const dailySyncStarted = useRef(false);
+
+  // Scroll listener to toggle floating 'Back to Top' button when scrolled past the first batch of movies
+  useEffect(() => {
+    const handleScroll = () => {
+      const gridEl = document.getElementById('movies-grid') || document.getElementById('movies-list');
+      if (gridEl) {
+        const rect = gridEl.getBoundingClientRect();
+        // Becomes visible once the user has scrolled past the hero section and past the top of the first batch
+        setShowBackToTop(rect.top < -150 || window.scrollY > 600);
+      } else {
+        setShowBackToTop(window.scrollY > 600);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // User reviews state (seeded from INITIAL_REVIEWS + Firestore/localStorage)
   const [reviews, setReviews] = useState<UserReview[]>(() => {
@@ -1429,6 +1453,26 @@ export default function App() {
         currentUser={currentUser}
         editingList={editingCustomList}
       />
+
+      {/* Floating 'Back to Top' Button (Appears only in movie catalogue view when scrolled past first batch of movies) */}
+      {currentView === 'catalogue' && !activeStandaloneList && showBackToTop && (
+        <button
+          onClick={scrollToTop}
+          id="btn-back-to-top"
+          aria-label="Back to top of movie catalogue"
+          title="Back to top"
+          className={`fixed z-40 flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-full shadow-2xl transition-all duration-300 backdrop-blur-md cursor-pointer border active:scale-95 group hover:scale-105 animate-in fade-in slide-in-from-bottom-3 ${
+            activeTheme === 'gold'
+              ? 'bg-amber-950/90 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-amber-100 shadow-amber-950/60'
+              : activeTheme === 'obsidian'
+              ? 'bg-purple-950/90 hover:bg-purple-900 border-purple-500/40 text-purple-300 hover:text-purple-100 shadow-purple-950/60'
+              : 'bg-emerald-950/90 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-emerald-100 shadow-emerald-950/60'
+          } ${showSweepPill ? 'bottom-16 sm:bottom-20 right-4 sm:right-5' : 'bottom-4 sm:bottom-5 right-4 sm:right-5'}`}
+        >
+          <ArrowUp className="w-4 h-4 text-inherit transition-transform group-hover:-translate-y-0.5" />
+          <span className="text-xs font-bold tracking-wide">Top</span>
+        </button>
+      )}
 
       {/* Unobtrusive Floating Multi-Decade Historical Sweep Status Pill */}
       {showSweepPill && (
