@@ -5,159 +5,98 @@
  * Firestore 'custom_movies' collection, enriches full cast & video credits,
  * and batch-writes new titles directly to Firestore using Firebase Admin SDK.
  * 
+ * Shared validation logic is imported directly from src/utils/nigerianMovieValidator.ts.
+ * 
  * Usage:
  *   node scripts/syncMovies.js
  * 
- * Required Environment Variables:
+ * Required Environment Variables (set via GitHub Secrets):
  *   TMDB_API_KEY: Your TMDb API v3 key
- *   FIREBASE_SERVICE_ACCOUNT: Service account JSON string (or file via GOOGLE_APPLICATION_CREDENTIALS)
+ *   FIREBASE_SERVICE_ACCOUNT: Service account JSON string (or base64 encoded)
  *   FIREBASE_PROJECT_ID: (Optional, defaults to 'naijareel-77079')
  */
 
 import admin from 'firebase-admin';
+import { 
+  ValidationStatus, 
+  validateNigerianMovie, 
+  isNigerianMovie, 
+  isDiscoveryCandidateEligible,
+  extractOriginCountries, 
+  parseSpokenLanguages, 
+  determineEra, 
+  normalizeTitle,
+  GENRE_MAP,
+  FALLBACK_POSTER,
+  FALLBACK_BACKDROP,
+  KNOWN_FOREIGN_TITLES_LOWER 
+} from '../src/utils/nigerianMovieValidator.ts';
 
-// Configuration
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT || 'naijareel-77079';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
-const FALLBACK_POSTER = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=800&auto=format&fit=crop';
-const FALLBACK_BACKDROP = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop';
 
-const GENRE_MAP = {
-  28: 'Action',
-  12: 'Adventure',
-  16: 'Animation',
-  35: 'Comedy',
-  80: 'Crime & Thriller',
-  99: 'Documentary',
-  18: 'Drama',
-  10751: 'Family',
-  14: 'Fantasy',
-  36: 'Historical Drama',
-  27: 'Horror',
-  10402: 'Music',
-  9648: 'Mystery',
-  10749: 'Romantic Comedy',
-  878: 'Sci-Fi',
-  53: 'Crime & Thriller',
-  10752: 'War',
-  37: 'Western'
-};
-
-const KNOWN_FOREIGN_TITLES_LOWER = new Set([
-  'wallace & gromit',
-  'wallace and gromit',
-  '29th street',
-  'baby steps',
-  'winnie the pooh',
-  'while you were sleeping',
-  'outrageous',
-  'captains outrageous',
-  'outrageous fortune',
-  'blade runner',
-  'nowhere to run',
-  '22 vs. earth',
-  '12 dates of christmas',
-  '12 days of christmas',
-  '12 gifts of christmas'
-]);
-
-function determineEra(year) {
-  const y = Number(year) || new Date().getFullYear();
-  if (y >= 2019) return 'Modern Global Era (2019-Present)';
-  if (y >= 2006) return 'New Nollywood (2006-2018)';
-  return 'Golden Era (1992-2005)';
-}
-
-function normalizeTitle(t) {
-  return String(t || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-function extractOriginCountries(item) {
-  if (!item || typeof item !== 'object') return [];
-  const sources = [
-    item.origin_country,
-    item.originCountry,
-    item.production_countries,
-    item.productionCountries,
-    item.country
-  ].filter(Boolean);
-
-  const countries = new Set();
-  for (const src of sources) {
-    if (Array.isArray(src)) {
-      for (const c of src) {
-        if (typeof c === 'string' && c.trim()) {
-          countries.add(c.trim().toUpperCase());
-        } else if (c && typeof c === 'object' && c.iso_3166_1) {
-          countries.add(String(c.iso_3166_1).trim().toUpperCase());
-        }
-      }
-    } else if (typeof src === 'string') {
-      src.split(/[,\s|]+/).forEach((code) => {
-        if (code.trim()) countries.add(code.trim().toUpperCase());
-      });
-    }
-  }
-  return Array.from(countries);
-}
-
-function parseSpokenLanguages(item) {
-  if (!item || typeof item !== 'object') return ['English'];
-  const langs = new Set();
-  const langSources = [item.spoken_languages, item.spokenLanguages, item.languages];
-  for (const src of langSources) {
-    if (Array.isArray(src)) {
-      for (const l of src) {
-        if (typeof l === 'string' && l.trim()) langs.add(l.trim());
-        else if (l && typeof l === 'object' && l.english_name) langs.add(l.english_name.trim());
-        else if (l && typeof l === 'object' && l.name) langs.add(l.name.trim());
-      }
-    }
-  }
-  const origLang = String(item.original_language || item.originalLanguage || '').toLowerCase().trim();
-  if (origLang === 'yo') langs.add('Yoruba');
-  else if (origLang === 'ig') langs.add('Igbo');
-  else if (origLang === 'ha') langs.add('Hausa');
-  else if (origLang === 'pcm') langs.add('Nigerian Pidgin');
-  else if (origLang === 'en') langs.add('English');
-
-  return langs.size > 0 ? Array.from(langs) : ['English'];
-}
-
-function isNigerianMovie(item) {
-  if (!item || typeof item !== 'object') return false;
-  const title = String(item.title || item.original_title || '').trim();
-  if (!title) return false;
-  const lowerTitle = title.toLowerCase();
-
-  for (const blocked of KNOWN_FOREIGN_TITLES_LOWER) {
-    if (lowerTitle === blocked || lowerTitle.startsWith(blocked + ' ')) {
-      return false;
-    }
-  }
-
-  const countries = extractOriginCountries(item);
-  if (countries.includes('NG')) {
-    return true;
-  }
-
-  const origLang = String(item.original_language || item.originalLanguage || '').toLowerCase().trim();
-  if (['yo', 'ig', 'ha', 'pcm'].includes(origLang)) {
-    return true;
-  }
-
-  const parsedLangs = parseSpokenLanguages(item);
-  return parsedLangs.some((l) => ['Yoruba', 'Igbo', 'Hausa', 'Nigerian Pidgin'].includes(l));
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Initialize Firebase Admin SDK
+ * Fetch helper with bounded retries and exponential backoff.
+ * Handles 401/403 (fails fast), 429 (rate limits), and 5xx (transient server errors).
  */
-function initializeFirebase() {
+async function fetchWithRetry(url, maxRetries = 2) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url);
+      
+      // Fast-fail on authentication or permission issues
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`TMDb authentication failed (HTTP ${res.status}): Please verify the TMDB_API_KEY secret.`);
+      }
+
+      // Handle rate limits with exponential backoff
+      if (res.status === 429) {
+        if (attempt < maxRetries) {
+          const backoff = Math.min(3000, 500 * Math.pow(2, attempt));
+          console.warn(`[TMDb] Rate limit encountered (429). Retrying in ${backoff}ms...`);
+          await sleep(backoff);
+          continue;
+        }
+        throw new Error('TMDb API rate limit exceeded (HTTP 429).');
+      }
+
+      // Handle transient 5xx server errors
+      if (res.status >= 500) {
+        if (attempt < maxRetries) {
+          const backoff = 800 * (attempt + 1);
+          console.warn(`[TMDb] Server error (${res.status}). Retrying in ${backoff}ms...`);
+          await sleep(backoff);
+          continue;
+        }
+        throw new Error(`TMDb server error (HTTP ${res.status}) on endpoint: ${url.split('?')[0]}`);
+      }
+
+      // 404 Not Found (e.g. movie id deleted on TMDb)
+      if (res.status === 404) {
+        return null;
+      }
+
+      return res;
+    } catch (err) {
+      if (err.message.includes('TMDb authentication failed') || attempt === maxRetries) {
+        throw err;
+      }
+      await sleep(400 * (attempt + 1));
+    }
+  }
+  return null;
+}
+
+/**
+ * Initialize Firebase Admin SDK.
+ * Throws actionable errors if credentials are missing or invalid (never silently exits with 0).
+ */
+export function initializeFirebase() {
   if (admin && Array.isArray(admin.apps) && admin.apps.length > 0) {
     return admin.firestore();
   }
@@ -173,28 +112,32 @@ function initializeFirebase() {
   ].find(isNonEmptyString);
 
   if (serviceAccountRaw) {
+    let parsed;
+    const trimmed = serviceAccountRaw.trim();
     try {
-      let parsed;
-      const trimmed = serviceAccountRaw.trim();
       if (trimmed.startsWith('{')) {
         parsed = JSON.parse(trimmed);
       } else {
         const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
         parsed = JSON.parse(decoded);
       }
-
-      if (parsed && typeof parsed === 'object') {
-        admin.initializeApp({
-          credential: admin.credential.cert(parsed),
-          projectId: parsed.project_id || PROJECT_ID
-        });
-        console.log(`[Firebase Admin] Authenticated with Service Account cert for project: ${parsed.project_id || PROJECT_ID}`);
-        return admin.firestore();
-      }
     } catch (err) {
-      console.warn(`[Firebase Admin] Warning: could not parse service account JSON: ${err.message}`);
-      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
-      process.exit(0);
+      throw new Error(`Failed to parse Firebase service account JSON from environment: ${err.message}. Verify that the FIREBASE_SERVICE_ACCOUNT secret contains valid JSON or base64-encoded JSON.`);
+    }
+
+    if (!parsed || typeof parsed !== 'object' || !parsed.project_id || !parsed.private_key) {
+      throw new Error('Firebase service account JSON is missing required fields (project_id or private_key).');
+    }
+
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert(parsed),
+        projectId: parsed.project_id || PROJECT_ID
+      });
+      console.log(`[Firebase Admin] Authenticated with Service Account cert for project: ${parsed.project_id || PROJECT_ID}`);
+      return admin.firestore();
+    } catch (err) {
+      throw new Error(`Firebase Admin SDK initialization failed with provided service account: ${err.message}`);
     }
   }
 
@@ -216,13 +159,11 @@ function initializeFirebase() {
       console.log(`[Firebase Admin] Authenticated with individual credential variables for project: ${resolvedProjectId}`);
       return admin.firestore();
     } catch (err) {
-      console.warn(`[Firebase Admin] Warning: could not initialize with individual credential variables: ${err.message}`);
-      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
-      process.exit(0);
+      throw new Error(`Firebase Admin SDK initialization failed with private key: ${err.message}`);
     }
   }
 
-  // 3. Fallback to application default credentials if explicitly specified by GOOGLE_APPLICATION_CREDENTIALS
+  // 3. Check for GOOGLE_APPLICATION_CREDENTIALS file path
   if (isNonEmptyString(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
     try {
       admin.initializeApp({
@@ -232,33 +173,33 @@ function initializeFirebase() {
       console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
       return admin.firestore();
     } catch (err) {
-      console.warn(`[Firebase Admin] Could not initialize credentials: ${err.message}`);
-      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
-      process.exit(0);
+      throw new Error(`Firebase Admin SDK application default credentials failed: ${err.message}`);
     }
   }
 
-  // If credentials are missing or empty, exit gracefully
-  console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
-  process.exit(0);
+  // If no credentials were provided, throw an actionable error so CI/Actions halts with non-zero exit code
+  throw new Error('Missing Firebase credentials: FIREBASE_SERVICE_ACCOUNT secret is not configured in the environment.');
 }
 
 /**
  * Main Sync Pipeline
  */
-async function main() {
+export async function runMovieSync() {
   const apiKey = (process.env.TMDB_API_KEY || '').trim();
   if (!apiKey) {
-    console.error('[Error] TMDB_API_KEY environment variable is not defined.');
-    console.error('Please configure your TMDb API key in GitHub Secrets as TMDB_API_KEY or export TMDB_API_KEY=...');
-    process.exit(1);
+    throw new Error('Missing TMDb credentials: TMDB_API_KEY environment variable is not defined.');
   }
 
   const db = initializeFirebase();
   console.log('[Sync] Beginning hourly Nigerian movie sync from TMDb to Firestore...');
 
-  // 1. Fetch existing movies from Firestore 'custom_movies' collection
-  const existingSnapshot = await db.collection('custom_movies').get();
+  let existingSnapshot;
+  try {
+    existingSnapshot = await db.collection('custom_movies').get();
+  } catch (err) {
+    throw new Error(`Failed to query Firestore 'custom_movies' collection: ${err.message}`);
+  }
+
   const existingIds = new Set();
   const existingTmdbIds = new Set();
   const existingNormalizedTitles = new Set();
@@ -276,7 +217,7 @@ async function main() {
 
   console.log(`[Sync] Loaded ${existingSnapshot.size} existing movie records from Firestore.`);
 
-  // 2. Discover recent Nigerian movies from TMDb (sort_by=release_date.desc)
+  // 1. Discover recent Nigerian movies from TMDb (pages 1 and 2, plus indigenous languages)
   const candidateMap = new Map();
   const discoveryEndpoints = [
     `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=release_date.desc&include_adult=false&page=1`,
@@ -285,26 +226,25 @@ async function main() {
   ];
 
   for (const url of discoveryEndpoints) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.results)) {
-          for (const item of data.results) {
-            if (item && item.id && !candidateMap.has(item.id)) {
+    const res = await fetchWithRetry(url);
+    if (res && res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.results)) {
+        for (const item of data.results) {
+          if (item && item.id && !candidateMap.has(item.id)) {
+            // Pre-filter with shared candidate eligibility helper
+            if (isDiscoveryCandidateEligible(item)) {
               candidateMap.set(item.id, item);
             }
           }
         }
       }
-    } catch (err) {
-      console.warn(`[Sync] Discovery endpoint query failed: ${err.message}`);
     }
   }
 
-  console.log(`[Sync] Discovered ${candidateMap.size} potential candidate titles from TMDb.`);
+  console.log(`[Sync] Discovered ${candidateMap.size} eligible candidate titles from TMDb.`);
 
-  // 3. Deduplicate against existing Firestore entries
+  // 2. Deduplicate against existing Firestore entries
   const newCandidates = [];
   for (const cand of candidateMap.values()) {
     if (existingTmdbIds.has(Number(cand.id))) continue;
@@ -314,28 +254,52 @@ async function main() {
   }
 
   console.log(`[Sync] Identified ${newCandidates.length} new candidates to inspect and ingest.`);
+
+  // 3. Handle zero new candidates without bypassing status audit logging
   if (newCandidates.length === 0) {
-    console.log('[Sync] Catalogue is fully up to date. No new titles to write.');
-    process.exit(0);
+    console.log('[Sync] Catalogue is fully up to date. Zero new titles to write.');
+    await db.collection('system_meta').doc('sync_status').set(
+      {
+        lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: 'success',
+        moviesDiscovered: candidateMap.size,
+        moviesEligible: 0,
+        moviesVerified: 0,
+        moviesRejected: 0,
+        newMoviesAdded: 0,
+        totalCatalogSize: existingSnapshot.size,
+        source: 'github_actions',
+        completedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+    console.log('[Sync] Status audit log updated: 0 new titles (success).');
+    return { addedCount: 0, totalExisting: existingSnapshot.size };
   }
 
   // 4. Enrich metadata, credits, and videos for new candidates (up to 30 per run)
   const moviesToWrite = [];
+  let rejectedCount = 0;
   const limit = Math.min(newCandidates.length, 30);
 
   for (let i = 0; i < limit; i++) {
     const cand = newCandidates[i];
     try {
-      const detailUrl = `${TMDB_BASE_URL}/movie/${cand.id}?api_key=${apiKey}&with_origin_country=NG&append_to_response=credits,videos`;
-      const res = await fetch(detailUrl);
-      if (!res.ok) continue;
+      const detailUrl = `${TMDB_BASE_URL}/movie/${cand.id}?api_key=${apiKey}&append_to_response=credits,videos`;
+      const res = await fetchWithRetry(detailUrl);
+      if (!res || !res.ok) continue;
 
       const details = await res.json();
-      if (!isNigerianMovie(details) && !isNigerianMovie(cand)) {
+      
+      // Authoritative validation on full enriched movie details
+      const validation = validateNigerianMovie(details, { isDetailEnriched: true });
+      if (!validation.isValid) {
+        console.info(`[Validation] Skipped "${details.title || cand.title}": ${validation.reason}`);
+        rejectedCount++;
         continue;
       }
 
-      // Director
+      // Director & Crew
       let director = 'Unknown Director';
       let directorAvatarUrl = '';
       let directorTmdbId = null;
@@ -482,7 +446,7 @@ async function main() {
     }
   }
 
-  // 5. Batch-write new movies to Firestore
+  // 5. Batch-write verified new movies to Firestore
   if (moviesToWrite.length > 0) {
     const chunkSize = 350;
     for (let i = 0; i < moviesToWrite.length; i += chunkSize) {
@@ -503,19 +467,52 @@ async function main() {
   await db.collection('system_meta').doc('sync_status').set(
     {
       lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
-      newMoviesAdded: moviesToWrite.length,
       status: 'success',
+      moviesDiscovered: candidateMap.size,
+      moviesEligible: newCandidates.length,
+      moviesVerified: moviesToWrite.length,
+      moviesRejected: rejectedCount,
+      newMoviesAdded: moviesToWrite.length,
       totalCatalogSize: existingSnapshot.size + moviesToWrite.length,
-      source: 'github_actions'
+      source: 'github_actions',
+      completedAt: new Date().toISOString()
     },
     { merge: true }
   );
 
   console.log('[Sync] Hourly background sync completed successfully.');
-  process.exit(0);
+  return { addedCount: moviesToWrite.length, totalExisting: existingSnapshot.size + moviesToWrite.length };
 }
 
-main().catch((err) => {
-  console.error('[Sync] Fatal error running sync:', err);
-  process.exit(1);
-});
+// Top-level CLI entry point
+if (process.argv[1] && process.argv[1].endsWith('syncMovies.js')) {
+  runMovieSync()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch(async (err) => {
+      console.error(`[Sync Fatal Error] ${err.message}`);
+      
+      // Attempt to record failure status in Firestore if admin app was initialized
+      try {
+        if (admin && admin.apps && admin.apps.length > 0) {
+          const db = admin.firestore();
+          await db.collection('system_meta').doc('sync_status').set(
+            {
+              lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+              status: 'failed',
+              error: err.message,
+              source: 'github_actions',
+              failedAt: new Date().toISOString()
+            },
+            { merge: true }
+          );
+        }
+      } catch (logErr) {
+        console.warn(`[Sync] Could not write failure audit log: ${logErr.message}`);
+      }
+
+      // Explicit non-zero exit code to fail GitHub Actions workflow run
+      process.exit(1);
+    });
+}

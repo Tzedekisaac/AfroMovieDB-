@@ -4,6 +4,9 @@ import { normalizeMovieCollections } from './movieCollections';
 import { sanitizeAndTagMovie } from './sanitizeAndTagMovie';
 import {
   isNigerianMovie,
+  isDiscoveryCandidateEligible,
+  validateNigerianMovie,
+  ValidationStatus,
   parseSpokenLanguages,
   extractOriginCountries,
   KNOWN_FOREIGN_TITLES_LOWER,
@@ -14,6 +17,9 @@ import {
 
 export {
   isNigerianMovie,
+  isDiscoveryCandidateEligible,
+  validateNigerianMovie,
+  ValidationStatus,
   parseSpokenLanguages,
   extractOriginCountries,
   KNOWN_FOREIGN_TITLES_LOWER,
@@ -349,15 +355,26 @@ export async function safeTmdbFetch(
     throwIfAborted(signal);
     try {
       const res = await fetch(url, { signal });
+      if (res.status === 401 || res.status === 403) {
+        console.warn(`[TMDb] Authentication error (${res.status}): Please check API key.`);
+        return res;
+      }
       if (res.status === 429) {
-        await sleep(350 * (attempt + 1));
+        const backoff = Math.min(3000, 400 * Math.pow(2, attempt));
+        await sleep(backoff);
         continue;
+      }
+      if (res.status >= 500) {
+        if (attempt < retries) {
+          await sleep(600 * (attempt + 1));
+          continue;
+        }
       }
       return res;
     } catch (error) {
       if (signal?.aborted) throw error;
       if (attempt === retries) return null;
-      await sleep(200);
+      await sleep(250 * (attempt + 1));
     }
   }
   throwIfAborted(signal);
@@ -849,8 +866,8 @@ export async function discoverNigerianMovies(
       }
     }
 
-    // Strictly validate against foreign leakage
-    const verifiedItems = Array.from(uniqueMap.values()).filter((item: any) => isNigerianMovie(item));
+    // Validate candidate eligibility (permits verified or un-enriched candidates, blocks foreign/blacklisted titles)
+    const verifiedItems = Array.from(uniqueMap.values()).filter((item: any) => isDiscoveryCandidateEligible(item));
 
     const candidates = verifiedItems.map((item: any) => 
       sanitizeCandidate(item, item.title || 'Nollywood Film')
@@ -1353,8 +1370,8 @@ export async function bulkSyncNigerianNewReleases(
       if (syncedMovies.length >= maxMovies) break;
 
       const candidate = sanitizeCandidate(rawCandidate);
-      // Skip invalid or non-Nigerian items
-      if (!candidate.title || !candidate.posterUrl || !isNigerianMovie(candidate)) continue;
+      // Skip invalid or non-eligible candidates (allows un-enriched candidates to proceed to detail pull)
+      if (!candidate.title || !candidate.posterUrl || !isDiscoveryCandidateEligible(candidate)) continue;
 
       // Skip existing films while allowing distinct remakes and alternate TMDb records.
       if (isDuplicateMovie(candidate, currentPool)) {
@@ -1363,6 +1380,7 @@ export async function bulkSyncNigerianNewReleases(
 
       try {
         const rawMovie = await pullMovieDetailsFromOnline(candidate);
+        if (!isNigerianMovie(rawMovie)) continue;
         const movie = sanitizeAndTagMovie(sanitizeMovie(rawMovie)) as Movie;
         syncedMovies.push(movie);
         currentPool.push(movie);
@@ -1547,7 +1565,7 @@ export async function runDeepHistoricalSweep(
           for (const rawCandidate of candidates) {
             throwIfAborted(signal);
             const candidate = sanitizeCandidate(rawCandidate);
-            if (!candidate.title || !isNigerianMovie(candidate) || isDuplicateMovie(candidate, pool)) continue;
+            if (!candidate.title || !isDiscoveryCandidateEligible(candidate) || isDuplicateMovie(candidate, pool)) continue;
 
             try {
               const rawMovie = await pullMovieDetailsFromOnline(candidate, false, signal);
@@ -1583,7 +1601,7 @@ export async function runDeepHistoricalSweep(
           for (const rawCand of searchCandidates.slice(0, 3)) {
             throwIfAborted(signal);
             const cand = sanitizeCandidate(rawCand);
-            if (!cand.title || !isNigerianMovie(cand) || isDuplicateMovie(cand, pool)) continue;
+            if (!cand.title || !isDiscoveryCandidateEligible(cand) || isDuplicateMovie(cand, pool)) continue;
 
             const rawMovie = await pullMovieDetailsFromOnline(cand, false, signal);
             throwIfAborted(signal);
