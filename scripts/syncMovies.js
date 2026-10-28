@@ -162,60 +162,85 @@ function initializeFirebase() {
     return admin.firestore();
   }
 
-  // Verify that required environment variables exist and are non-empty before checking properties
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  const firebaseConfig = process.env.FIREBASE_CONFIG;
-  const googleCredentials = process.env.GOOGLE_CREDENTIALS;
-  const googleAppCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const isNonEmptyString = (val) => typeof val === 'string' && val.trim().length > 0;
 
-  const rawCredentials = [serviceAccount, serviceAccountKey, firebaseConfig, googleCredentials].find(
-    (val) => typeof val === 'string' && val.trim().length > 0
-  );
+  // 1. Check for complete service account credentials (raw JSON or base64 encoded)
+  const serviceAccountRaw = [
+    process.env.FIREBASE_SERVICE_ACCOUNT,
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+    process.env.FIREBASE_CONFIG,
+    process.env.GOOGLE_CREDENTIALS
+  ].find(isNonEmptyString);
 
-  const hasGoogleAppCredentials = typeof googleAppCredentials === 'string' && googleAppCredentials.trim().length > 0;
-
-  if (!rawCredentials && !hasGoogleAppCredentials) {
-    console.warn('Firebase environment credentials not set, skipping background sync execution.');
-    process.exit(0);
-  }
-
-  if (rawCredentials) {
+  if (serviceAccountRaw) {
     try {
       let parsed;
-      const trimmed = rawCredentials.trim();
+      const trimmed = serviceAccountRaw.trim();
       if (trimmed.startsWith('{')) {
         parsed = JSON.parse(trimmed);
       } else {
         const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
         parsed = JSON.parse(decoded);
       }
-      admin.initializeApp({
-        credential: admin.credential.cert(parsed),
-        projectId: parsed.project_id || PROJECT_ID
-      });
-      console.log(`[Firebase Admin] Authenticated with Service Account cert for project: ${parsed.project_id || PROJECT_ID}`);
-      return admin.firestore();
+
+      if (parsed && typeof parsed === 'object') {
+        admin.initializeApp({
+          credential: admin.credential.cert(parsed),
+          projectId: parsed.project_id || PROJECT_ID
+        });
+        console.log(`[Firebase Admin] Authenticated with Service Account cert for project: ${parsed.project_id || PROJECT_ID}`);
+        return admin.firestore();
+      }
     } catch (err) {
       console.warn(`[Firebase Admin] Warning: could not parse service account JSON: ${err.message}`);
-      console.warn('Firebase environment credentials not set, skipping background sync execution.');
+      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
       process.exit(0);
     }
   }
 
-  // Fallback to application default credentials if configured
-  try {
-    admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
-      projectId: PROJECT_ID
-    });
-    console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
-    return admin.firestore();
-  } catch (err) {
-    console.warn(`[Firebase Admin] Could not initialize credentials: ${err.message}`);
-    console.warn('Firebase environment credentials not set, skipping background sync execution.');
-    process.exit(0);
+  // 2. Check for individual credential variables (client email, private key, project ID)
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL || process.env.FIREBASE_SERVICE_ACCOUNT_EMAIL;
+  if (isNonEmptyString(privateKey) && isNonEmptyString(clientEmail)) {
+    try {
+      const formattedPrivateKey = privateKey.trim().replace(/\\n/g, '\n');
+      const resolvedProjectId = (isNonEmptyString(process.env.FIREBASE_PROJECT_ID) ? process.env.FIREBASE_PROJECT_ID.trim() : PROJECT_ID);
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: resolvedProjectId,
+          clientEmail: clientEmail.trim(),
+          privateKey: formattedPrivateKey
+        }),
+        projectId: resolvedProjectId
+      });
+      console.log(`[Firebase Admin] Authenticated with individual credential variables for project: ${resolvedProjectId}`);
+      return admin.firestore();
+    } catch (err) {
+      console.warn(`[Firebase Admin] Warning: could not initialize with individual credential variables: ${err.message}`);
+      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
+      process.exit(0);
+    }
   }
+
+  // 3. Fallback to application default credentials if explicitly specified by GOOGLE_APPLICATION_CREDENTIALS
+  if (isNonEmptyString(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+        projectId: PROJECT_ID
+      });
+      console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
+      return admin.firestore();
+    } catch (err) {
+      console.warn(`[Firebase Admin] Could not initialize credentials: ${err.message}`);
+      console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
+      process.exit(0);
+    }
+  }
+
+  // If credentials are missing or empty, exit gracefully
+  console.warn('Firebase environment credentials not set or invalid, skipping background sync execution.');
+  process.exit(0);
 }
 
 /**
