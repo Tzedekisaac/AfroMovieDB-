@@ -17,6 +17,8 @@
  */
 
 import admin from 'firebase-admin';
+import { initializeApp, getApps, cert, applicationDefault } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { 
   ValidationStatus, 
   validateNigerianMovie, 
@@ -31,6 +33,34 @@ import {
   FALLBACK_BACKDROP,
   KNOWN_FOREIGN_TITLES_LOWER 
 } from '../src/utils/nigerianMovieValidator.ts';
+
+// Ensure admin and admin.credential are fully populated in ES module environments
+if (admin) {
+  if (!admin.credential) {
+    admin.credential = {
+      cert: (serviceAccount) => {
+        if (typeof cert === 'function') {
+          return cert(serviceAccount);
+        }
+        throw new Error("Unable to locate Firebase Admin 'cert' credential factory.");
+      },
+      applicationDefault: () => {
+        if (typeof applicationDefault === 'function') {
+          return applicationDefault();
+        }
+        throw new Error("Unable to locate Firebase Admin 'applicationDefault' credential factory.");
+      }
+    };
+  }
+  if (!admin.initializeApp) {
+    admin.initializeApp = (options, name) => initializeApp(options, name);
+  }
+  if (!admin.firestore) {
+    const firestoreFn = (app) => (app ? getFirestore(app) : getFirestore());
+    firestoreFn.FieldValue = FieldValue;
+    admin.firestore = firestoreFn;
+  }
+}
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT || 'naijareel-77079';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
@@ -97,11 +127,33 @@ async function fetchWithRetry(url, maxRetries = 2) {
  * Throws actionable errors if credentials are missing or invalid (never silently exits with 0).
  */
 export function initializeFirebase() {
-  if (admin && Array.isArray(admin.apps) && admin.apps.length > 0) {
-    return admin.firestore();
+  const existingApps = (typeof getApps === 'function' ? getApps() : (admin?.apps || []));
+  if (Array.isArray(existingApps) && existingApps.length > 0) {
+    return typeof getFirestore === 'function' ? getFirestore(existingApps[0]) : admin.firestore();
   }
 
   const isNonEmptyString = (val) => typeof val === 'string' && val.trim().length > 0;
+
+  // Safe credential factory resolution ensuring admin.credential.cert is valid and available
+  const getCert = (sa) => {
+    if (admin && admin.credential && typeof admin.credential.cert === 'function') {
+      return admin.credential.cert(sa);
+    }
+    if (typeof cert === 'function') {
+      return cert(sa);
+    }
+    throw new Error("Firebase Admin SDK credential 'cert' factory is unavailable.");
+  };
+
+  const getAppDefault = () => {
+    if (admin && admin.credential && typeof admin.credential.applicationDefault === 'function') {
+      return admin.credential.applicationDefault();
+    }
+    if (typeof applicationDefault === 'function') {
+      return applicationDefault();
+    }
+    throw new Error("Firebase Admin SDK credential 'applicationDefault' factory is unavailable.");
+  };
 
   // 1. Check for complete service account credentials (raw JSON or base64 encoded)
   const serviceAccountRaw = [
@@ -130,12 +182,13 @@ export function initializeFirebase() {
     }
 
     try {
-      admin.initializeApp({
-        credential: admin.credential.cert(parsed),
-        projectId: parsed.project_id || PROJECT_ID
-      });
+      const credential = getCert(parsed);
+      const app = (admin && typeof admin.initializeApp === 'function')
+        ? admin.initializeApp({ credential, projectId: parsed.project_id || PROJECT_ID })
+        : initializeApp({ credential, projectId: parsed.project_id || PROJECT_ID });
+
       console.log(`[Firebase Admin] Authenticated with Service Account cert for project: ${parsed.project_id || PROJECT_ID}`);
-      return admin.firestore();
+      return typeof getFirestore === 'function' ? getFirestore(app) : admin.firestore();
     } catch (err) {
       throw new Error(`Firebase Admin SDK initialization failed with provided service account: ${err.message}`);
     }
@@ -148,16 +201,17 @@ export function initializeFirebase() {
     try {
       const formattedPrivateKey = privateKey.trim().replace(/\\n/g, '\n');
       const resolvedProjectId = (isNonEmptyString(process.env.FIREBASE_PROJECT_ID) ? process.env.FIREBASE_PROJECT_ID.trim() : PROJECT_ID);
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: resolvedProjectId,
-          clientEmail: clientEmail.trim(),
-          privateKey: formattedPrivateKey
-        }),
-        projectId: resolvedProjectId
+      const credential = getCert({
+        projectId: resolvedProjectId,
+        clientEmail: clientEmail.trim(),
+        privateKey: formattedPrivateKey
       });
+      const app = (admin && typeof admin.initializeApp === 'function')
+        ? admin.initializeApp({ credential, projectId: resolvedProjectId })
+        : initializeApp({ credential, projectId: resolvedProjectId });
+
       console.log(`[Firebase Admin] Authenticated with individual credential variables for project: ${resolvedProjectId}`);
-      return admin.firestore();
+      return typeof getFirestore === 'function' ? getFirestore(app) : admin.firestore();
     } catch (err) {
       throw new Error(`Firebase Admin SDK initialization failed with private key: ${err.message}`);
     }
@@ -166,12 +220,13 @@ export function initializeFirebase() {
   // 3. Check for GOOGLE_APPLICATION_CREDENTIALS file path
   if (isNonEmptyString(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
     try {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-        projectId: PROJECT_ID
-      });
+      const credential = getAppDefault();
+      const app = (admin && typeof admin.initializeApp === 'function')
+        ? admin.initializeApp({ credential, projectId: PROJECT_ID })
+        : initializeApp({ credential, projectId: PROJECT_ID });
+
       console.log(`[Firebase Admin] Authenticated with Application Default Credentials for project: ${PROJECT_ID}`);
-      return admin.firestore();
+      return typeof getFirestore === 'function' ? getFirestore(app) : admin.firestore();
     } catch (err) {
       throw new Error(`Firebase Admin SDK application default credentials failed: ${err.message}`);
     }
