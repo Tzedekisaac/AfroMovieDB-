@@ -1,5 +1,5 @@
-import type { Movie } from '../types';
-import { normalizeMovieCollections } from './movieCollections';
+import type { Movie } from '../types.ts';
+import { normalizeMovieCollections } from './movieCollections.ts';
 
 function replaceUndefinedValues(value: unknown): unknown {
   if (value === undefined) return null;

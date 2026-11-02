@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Movie, UserReview, MovieWatchStatus } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { 
@@ -10,6 +10,7 @@ import { PersonHeadshot } from './PersonHeadshot';
 import { PersonProfileModal } from './PersonProfileModal';
 import { pullMovieDetailsFromOnline, WebMovieCandidate } from '../utils/api';
 import { TrackingStatusPicker } from './TrackingStatusPicker';
+import { ReviewSection } from './ReviewSection';
 
 interface MovieDetailModalProps {
   movie: Movie | null;
@@ -23,8 +24,8 @@ interface MovieDetailModalProps {
   onUpdateRewatchCount?: (movieId: string, count: number) => void;
   allMovies: Movie[];
   onSelectMovie: (movie: Movie) => void;
-  reviews: UserReview[];
-  onAddReview: (review: Omit<UserReview, 'id' | 'createdAt'>) => void;
+  reviews?: UserReview[];
+  onAddReview?: (review: Omit<UserReview, 'id' | 'createdAt'>) => void;
   currentUser?: FirebaseUser | null;
   onOpenEdit?: (movie: Movie) => void;
   onUpdateMovie?: (movie: Movie) => void;
@@ -50,12 +51,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   onUpdateMovie,
   onOpenAuth
 }) => {
-  // Review form state
-  const [userName, setUserName] = useState('');
-  const [userRating, setUserRating] = useState(10);
-  const [userLocation, setUserLocation] = useState('Lagos, Nigeria');
-  const [userComment, setUserComment] = useState('');
-  const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
@@ -117,12 +112,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     setSelectedPerson({ name, roleHint, avatarUrl, tmdbId });
   };
 
-  // Auto-fill user name if logged in
-  useEffect(() => {
-    if (currentUser && !userName) {
-      setUserName(currentUser.displayName || currentUser.email?.split('@')[0] || '');
-    }
-  }, [currentUser]);
 
   // Synchronize ?movie=<id> search param with browser history
   useEffect(() => {
@@ -152,36 +141,10 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   if (!movie) return null;
 
-  // Filter reviews for this movie
-  const movieReviews = reviews.filter(r => r.movieId === movie.id);
-
   // Related movies (same genre or director or era)
   const relatedMovies = allMovies
     .filter(m => m.id !== movie.id && (m.genres.some(g => movie.genres.includes(g)) || m.director === movie.director))
     .slice(0, 4);
-
-  const handleSubmitReview = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser) {
-      if (onOpenAuth) onOpenAuth();
-      return;
-    }
-    if (!userName.trim() || !userComment.trim()) return;
-
-    onAddReview({
-      movieId: movie.id,
-      userName: userName.trim(),
-      rating: userRating,
-      comment: userComment.trim(),
-      userLocation: userLocation.trim() || 'Nigeria',
-      userId: currentUser.uid,
-      userEmail: currentUser.email || undefined
-    });
-
-    setUserComment('');
-    setReviewSubmitted(true);
-    setTimeout(() => setReviewSubmitted(false), 4000);
-  };
 
   const handleShare = () => {
     if (!movie) return;
@@ -570,139 +533,12 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           </div>
 
           {/* Interactive User Reviews & Ratings Section */}
-          <div className="border-t border-slate-800 pt-8 space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-emerald-400" />
-                  Naija Film Fan Reviews & Discussions
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Join the cultural conversation — rate this Nollywood masterpiece.
-                </p>
-              </div>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
-                {movieReviews.length} Review{movieReviews.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-
-            {/* Write a Review Box */}
-            <form onSubmit={handleSubmitReview} className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Leave Your Review
-              </h4>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Your Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Tunde Balogun"
-                    value={userName}
-                    onChange={(e) => setUserName(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Your City / State</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Lagos, Abuja, London, Atlanta"
-                    value={userLocation}
-                    onChange={(e) => setUserLocation(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Rating (1 to 10)</label>
-                  <select
-                    value={userRating}
-                    onChange={(e) => setUserRating(Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  >
-                    {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((num) => (
-                      <option key={num} value={num}>
-                        {num} / 10 {num >= 9 ? '🌟 (Classic Masterpiece)' : num >= 7 ? '👍 (Great Watch)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Your Thoughts on the Film</label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="What made this movie memorable? Acting, direction, plot twists, soundtrack..."
-                  value={userComment}
-                  onChange={(e) => setUserComment(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                {reviewSubmitted ? (
-                  <span className="text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Review submitted successfully! Thank you for supporting Nollywood cinema.
-                  </span>
-                ) : (
-                  <span className="text-xs text-slate-500">
-                    Your review helps others discover authentic Nigerian stories.
-                  </span>
-                )}
-
-                <button
-                  type="submit"
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs sm:text-sm transition-all"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Submit Review</span>
-                </button>
-              </div>
-            </form>
-
-            {/* Reviews List */}
-            <div className="space-y-3">
-              {movieReviews.length === 0 ? (
-                <p className="text-xs text-slate-500 italic py-2">
-                  No user reviews yet for this title. Be the first to share your thoughts!
-                </p>
-              ) : (
-                movieReviews.map((rev) => (
-                  <div key={rev.id} className="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-xs">
-                          {rev.userName[0]}
-                        </div>
-                        <div>
-                          <span className="text-xs sm:text-sm font-bold text-white">{rev.userName}</span>
-                          <span className="text-[11px] text-slate-400 ml-2">from {rev.userLocation}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded text-amber-400 text-xs font-bold border border-slate-800">
-                        <Star className="w-3 h-3 fill-amber-400" />
-                        <span>{rev.rating}/10</span>
-                      </div>
-                    </div>
-
-                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                      "{rev.comment}"
-                    </p>
-                    <span className="text-[10px] text-slate-500 block">
-                      {rev.createdAt}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          <ReviewSection
+            movieId={movie.id}
+            movie={movie}
+            currentUser={currentUser}
+            onOpenAuth={onOpenAuth}
+          />
 
           {/* Related Nollywood Movies */}
           {relatedMovies.length > 0 && (

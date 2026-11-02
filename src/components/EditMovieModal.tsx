@@ -6,6 +6,7 @@ import {
   ExternalLink, Layers, Globe, Video
 } from 'lucide-react';
 import { Movie, Genre, Era, CastMember, StreamingPlatform } from '../types';
+import { sanitizeAndAlignMovieMetadata, validateMovieArtwork } from '../utils/validation';
 
 interface EditMovieModalProps {
   isOpen: boolean;
@@ -204,7 +205,8 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
     setErrorMessage(null);
 
     try {
-      await onSaveMovie(updatedMovie);
+      const alignedMovie = sanitizeAndAlignMovieMetadata(updatedMovie);
+      await onSaveMovie(alignedMovie);
       setSaveSuccess(true);
       setTimeout(() => {
         setSaveSuccess(false);

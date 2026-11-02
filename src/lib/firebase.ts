@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
-import firebaseConfigData from '../../firebase-applet-config.json';
+import firebaseConfigData from '../../firebase-applet-config.json' with { type: 'json' };
 
 export const firebaseConfig = {
   projectId: firebaseConfigData.projectId || "naijareel-77079",

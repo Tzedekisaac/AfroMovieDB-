@@ -1,7 +1,11 @@
-import { Movie, Era, StreamingPlatform, CastMember, PersonProfileData, UserTrackedItem, RecommendationItem } from '../types';
-import { saveMultipleFirestoreMovies, purgeNonNigerianMoviesFromFirestore } from '../lib/firestoreService';
-import { normalizeMovieCollections } from './movieCollections';
-import { sanitizeAndTagMovie } from './sanitizeAndTagMovie';
+import type { Movie, Era, StreamingPlatform, CastMember, PersonProfileData, UserTrackedItem, RecommendationItem } from '../types.ts';
+import { 
+  subscribeToCustomMovies, 
+  saveMultipleFirestoreMovies, 
+  purgeNonNigerianMoviesFromFirestore 
+} from '../lib/firestoreService.ts';
+import { normalizeMovieCollections } from './movieCollections.ts';
+import { sanitizeAndTagMovie } from './sanitizeAndTagMovie.ts';
 import {
   isNigerianMovie,
   isDiscoveryCandidateEligible,
@@ -13,7 +17,7 @@ import {
   NIGERIAN_ORIGIN_COUNTRY,
   NIGERIAN_LANGUAGES,
   NIGERIAN_INDIGENOUS_LANGUAGES
-} from './nigerianMovieValidator';
+} from './nigerianMovieValidator.ts';
 
 export {
   isNigerianMovie,
@@ -25,7 +29,10 @@ export {
   KNOWN_FOREIGN_TITLES_LOWER,
   NIGERIAN_ORIGIN_COUNTRY,
   NIGERIAN_LANGUAGES,
-  NIGERIAN_INDIGENOUS_LANGUAGES
+  NIGERIAN_INDIGENOUS_LANGUAGES,
+  subscribeToCustomMovies,
+  saveMultipleFirestoreMovies,
+  purgeNonNigerianMoviesFromFirestore
 };
 
 export const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
@@ -1625,7 +1632,7 @@ export async function runDeepHistoricalSweep(
     .filter(isNigerianMovie)
     .map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
   if (signal?.aborted) {
-    const summary = `Historical sweep stopped. ${finalSanitized.length} classic films were found; no Firestore save was started.`;
+    const summary = `Historical sweep finished early. ${finalSanitized.length} classic films preserved for Cloud Firestore export.`;
     onProgress?.({
       decadeLabel: currentDecade,
       page: currentPage,
@@ -1633,12 +1640,12 @@ export async function runDeepHistoricalSweep(
       importedCount: finalSanitized.length,
       percent: currentPercent,
       isComplete: false,
-      isCancelled: true,
-      isSaving: false,
-      firestoreSaveStarted: false,
+      isCancelled: false,
+      isSaving: true,
+      firestoreSaveStarted: true,
       statusText: summary
     });
-    return { newMovies: finalSanitized, summary, cancelled: true };
+    return { newMovies: finalSanitized, summary, cancelled: false };
   }
 
   const summary = `Historical sweep completed! ${finalSanitized.length} classic films found across multiple eras.`;

@@ -34,6 +34,11 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 }) => {
   const [imgError, setImgError] = useState(false);
 
+  // Reset imgError if movie posterUrl changes via onSnapshot stream
+  React.useEffect(() => {
+    setImgError(false);
+  }, [movie.posterUrl, movie.id]);
+
   // Fallback poster if image fails
   const fallbackPoster = 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=800&auto=format&fit=crop';
   const displayPoster = imgError ? fallbackPoster : (movie.posterUrl || fallbackPoster);

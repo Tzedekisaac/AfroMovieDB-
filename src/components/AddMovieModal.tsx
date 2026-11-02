@@ -8,6 +8,8 @@ import {
 import { Movie, Genre, Era, StreamingPlatform, CastMember } from '../types';
 import { normalizeMovieCollections } from '../utils/movieCollections';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
+import { sanitizeAndAlignMovieMetadata } from '../utils/validation';
+import { MovieForm } from './MovieForm';
 import { 
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
@@ -122,7 +124,8 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
   // Confirm adding web-pulled movie
   const handleConfirmAddWebMovie = () => {
     if (!previewMovie) return;
-    onAddMovie(sanitizeAndTagMovie(previewMovie) as Movie);
+    const pristineMovie = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(previewMovie) as Movie);
+    onAddMovie(pristineMovie);
     setAddedSuccessId(previewMovie.id);
     setTimeout(() => {
       setAddedSuccessId(null);
@@ -185,7 +188,8 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({
       source: 'custom'
     };
 
-    onAddMovie(sanitizeAndTagMovie(newMovie) as Movie);
+    const pristineMovie = sanitizeAndAlignMovieMetadata(newMovie);
+    onAddMovie(pristineMovie);
     setAddedSuccessId(newMovie.id);
     setTimeout(() => {
       setAddedSuccessId(null);

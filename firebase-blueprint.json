@@ -243,6 +243,10 @@
       "schema": { "$ref": "#/entities/Movie" },
       "description": "Custom, edited, or synced Nollywood movie entries"
     },
+    "/custom_movies/{movieId}/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Community user reviews stored directly within the movie document subcollection"
+    },
     "/custom_lists/{listId}": {
       "schema": { "$ref": "#/entities/CustomUserList" },
       "description": "Public and user curated themed film collections"

@@ -30,10 +30,10 @@ import {
   HistoricalSweepProgress,
   sanitizeMovie
 } from './utils/api';
-import { INITIAL_REVIEWS } from './data/reviews';
 import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
 import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
 import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
+import { sanitizeAndAlignMovieMetadata } from './utils/validation';
 import { Navbar } from './components/Navbar';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { CatalogueFilters } from './components/CatalogueFilters';
@@ -135,7 +135,7 @@ export default function App() {
 
   // Deep Historical Archive Sweep state
   const [isSweeping, setIsSweeping] = useState(false);
-  const [isCancellingSweep, setIsCancellingSweep] = useState(false);
+  const [isFinishingSweep, setIsFinishingSweep] = useState(false);
   const [sweepProgress, setSweepProgress] = useState<HistoricalSweepProgress | null>(null);
   const [showSweepPill, setShowSweepPill] = useState(true);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -165,18 +165,20 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // User reviews state (seeded from INITIAL_REVIEWS + Firestore/localStorage)
+  // User reviews state (loaded from Firestore/localStorage)
   const [reviews, setReviews] = useState<UserReview[]>(() => {
     try {
       const saved = localStorage.getItem(REVIEWS_STORAGE_KEY) || localStorage.getItem('naijareel_user_reviews_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return [...INITIAL_REVIEWS, ...parsed];
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
       }
     } catch {
       // fallback
     }
-    return INITIAL_REVIEWS;
+    return [];
   });
 
   // Modal states
@@ -250,13 +252,7 @@ export default function App() {
   // Listen to Firestore Real-time Reviews
   useEffect(() => {
     const unsubscribe = subscribeToReviews((cloudReviews) => {
-      if (cloudReviews.length > 0) {
-        setReviews(prev => {
-          const cloudIds = new Set(cloudReviews.map(r => r.id));
-          const baseFiltered = INITIAL_REVIEWS.filter(r => !cloudIds.has(r.id));
-          return [...cloudReviews, ...baseFiltered];
-        });
-      }
+      setReviews(cloudReviews || []);
     });
     return () => unsubscribe();
   }, []);
@@ -277,8 +273,10 @@ export default function App() {
     }, 15000);
 
     const unsubscribe = subscribeToCustomMovies((cloudMovies, fromCache) => {
-      // Direct rendering of all Firestore documents with safe fallbacks
-      const sanitizedCloud = (cloudMovies || []).map((movie) => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
+      // Direct rendering of all Firestore documents with safe fallbacks and aligned visual assets
+      const sanitizedCloud = (cloudMovies || []).map((movie) => 
+        sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie)
+      );
       setMoviesList(sanitizedCloud);
       if (sanitizedCloud.length > 0 || !fromCache) {
         window.clearTimeout(snapshotTimeout);
@@ -286,7 +284,21 @@ export default function App() {
         setIsCatalogInitializationComplete(true);
         setCatalogLoadError(null);
       }
+
+      // Immediately propagate updated movie documents to any open modals in real time
       setSelectedMovie(curr => {
+        if (!curr) return null;
+        const match = sanitizedCloud.find(m => m.id === curr.id);
+        return match || curr;
+      });
+
+      setEditingMovie(curr => {
+        if (!curr) return null;
+        const match = sanitizedCloud.find(m => m.id === curr.id);
+        return match || curr;
+      });
+
+      setTrailerMovie(curr => {
         if (!curr) return null;
         const match = sanitizedCloud.find(m => m.id === curr.id);
         return match || curr;
@@ -312,7 +324,7 @@ export default function App() {
 
   // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
   const handleMoviePulled = async (newMovie: Movie) => {
-    const movieWithDefaultCollection = sanitizeAndTagMovie(newMovie) as Movie;
+    const movieWithDefaultCollection = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(newMovie) as Movie);
     // Direct real-time write to Firebase Firestore custom_movies collection
     try {
       await saveFirestoreCustomMovie(movieWithDefaultCollection, currentUser?.uid || 'community-contributor');
@@ -330,7 +342,7 @@ export default function App() {
 
   // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)
   const handleUpdateMovie = async (updatedMovie: Movie) => {
-    const safeUpdatedMovie = sanitizeAndTagMovie(updatedMovie) as Movie;
+    const safeUpdatedMovie = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(updatedMovie) as Movie);
     // Synchronize selected movie modal & trailer modal in real time
     if (selectedMovie?.id === safeUpdatedMovie.id) {
       setSelectedMovie(safeUpdatedMovie);
@@ -631,104 +643,97 @@ export default function App() {
     const controller = new AbortController();
     sweepAbortController.current = controller;
     setIsSweeping(true);
-    setIsCancellingSweep(false);
+    setIsFinishingSweep(false);
     setSweepProgress(null);
     setShowSweepPill(true);
+
+    let collectedMovies: Movie[] = [];
 
     try {
       const result = await runDeepHistoricalSweep(
         moviesList,
-        setSweepProgress,
+        (progress) => {
+          setSweepProgress(progress);
+        },
         20,
         controller.signal
       );
 
-      if (result.cancelled || controller.signal.aborted) {
-        if (controller.signal.aborted && !result.cancelled) {
-          setSweepProgress((progress) => progress ? {
-            ...progress,
-            isComplete: false,
-            isCancelled: true,
-            statusText: `Historical sweep stopped. ${progress.importedCount} films were found; no Firestore save was started.`
-          } : progress);
-        }
-        return;
-      }
-
-      if (result.newMovies.length > 0) {
-        setSweepProgress((progress) => progress ? {
-          ...progress,
-          isSaving: true,
-          firestoreSaveStarted: true,
-          statusText: `Scan complete. Saving ${result.newMovies.length} classic films to Firestore…`
-        } : progress);
-        try {
-          await saveMultipleFirestoreMovies(
-            result.newMovies,
-            currentUser?.uid || 'community-sweep',
-            controller.signal
-          );
-        } catch (err) {
-          if (controller.signal.aborted) {
-            setSweepProgress((progress) => progress ? {
-              ...progress,
-              isComplete: false,
-              isCancelled: true,
-              isSaving: false,
-              firestoreSaveStarted: true,
-              statusText: `Scan stopped during the Firestore save. ${progress.importedCount} films were found; the current batch may have finished.`
-            } : progress);
-            return;
-          }
-          console.warn('Direct Firestore batch write for sweep encountered an issue:', err);
-        }
-
-        if (controller.signal.aborted) {
-          setSweepProgress((progress) => progress ? {
-            ...progress,
-            isComplete: false,
-            isCancelled: true,
-            isSaving: false,
-            firestoreSaveStarted: true,
-            statusText: `Scan stopped during the Firestore save. ${progress.importedCount} films were found; completed batches may already be saved.`
-          } : progress);
-          return;
-        }
-
-        setSweepProgress((progress) => progress ? {
-          ...progress,
-          isSaving: false,
-          firestoreSaveStarted: false
-        } : progress);
-        setSyncNotice(`Published ${result.newMovies.length} classic films directly to Cloud Firestore!`);
-        setTimeout(() => setSyncNotice(null), 5000);
-      }
+      collectedMovies = result.newMovies || [];
     } catch (err) {
-      if (controller.signal.aborted) {
-        setSweepProgress((progress) => progress ? {
-          ...progress,
-          isComplete: false,
-          isCancelled: true,
-          isSaving: false,
-          firestoreSaveStarted: false,
-          statusText: `Historical sweep stopped. ${progress.importedCount} films were found.`
-        } : progress);
-      } else {
+      if (!controller.signal.aborted) {
         console.error('Historical sweep error:', err);
       }
-    } finally {
-      if (sweepAbortController.current === controller) {
-        sweepAbortController.current = null;
-      }
-      setIsSweeping(false);
-      setIsCancellingSweep(false);
     }
+
+    // Graceful Stop & Cloud Export:
+    // When the sweep completes or when the user clicks "Finished" early,
+    // take all movies successfully swept or imported up to that point,
+    // and securely export/save them to live Firebase Firestore custom_movies!
+    if (collectedMovies.length > 0) {
+      setSweepProgress((progress) => ({
+        decadeLabel: 'Exporting',
+        page: progress?.page || 1,
+        totalPages: progress?.totalPages || 20,
+        importedCount: collectedMovies.length,
+        percent: 100,
+        isComplete: false,
+        isCancelled: false,
+        isSaving: true,
+        firestoreSaveStarted: true,
+        statusText: `Exporting ${collectedMovies.length} swept classic films to Cloud Firestore…`
+      }));
+
+      try {
+        await saveMultipleFirestoreMovies(
+          collectedMovies,
+          currentUser?.uid || 'community-sweep'
+        );
+      } catch (err) {
+        console.warn('Batch write of swept movies encountered an issue:', err);
+      }
+
+      setSweepProgress({
+        decadeLabel: 'Complete',
+        page: 20,
+        totalPages: 20,
+        importedCount: collectedMovies.length,
+        percent: 100,
+        isComplete: true,
+        isCancelled: false,
+        isSaving: false,
+        firestoreSaveStarted: false,
+        statusText: `Finished! Successfully saved ${collectedMovies.length} classic films to Cloud Firestore.`
+      });
+
+      setSyncNotice(`Published ${collectedMovies.length} classic films directly to Cloud Firestore!`);
+      setTimeout(() => setSyncNotice(null), 5000);
+    } else {
+      setSweepProgress({
+        decadeLabel: 'Complete',
+        page: 20,
+        totalPages: 20,
+        importedCount: 0,
+        percent: 100,
+        isComplete: true,
+        isCancelled: false,
+        isSaving: false,
+        firestoreSaveStarted: false,
+        statusText: 'Finished! No new unique Nigerian films were found to import.'
+      });
+    }
+
+    if (sweepAbortController.current === controller) {
+      sweepAbortController.current = null;
+    }
+    setIsSweeping(false);
+    setIsFinishingSweep(false);
   };
 
-  const handleCancelHistoricalSweep = () => {
+  const handleFinishHistoricalSweep = () => {
     const controller = sweepAbortController.current;
     if (!controller || controller.signal.aborted) return;
-    setIsCancellingSweep(true);
+    setIsFinishingSweep(true);
     controller.abort();
   };
 
@@ -1479,9 +1484,10 @@ export default function App() {
         <HistoricalSweepPill
           progress={sweepProgress}
           isRunning={isSweeping}
-          isCancelling={isCancellingSweep}
+          isFinishing={isFinishingSweep}
           onTriggerSweep={handleTriggerHistoricalSweep}
-          onCancelSweep={handleCancelHistoricalSweep}
+          onFinishSweep={handleFinishHistoricalSweep}
+          onCancelSweep={handleFinishHistoricalSweep}
           onDismiss={() => setShowSweepPill(false)}
         />
       )}
