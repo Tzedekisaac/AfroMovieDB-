@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Movie, MovieWatchStatus } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Movie, MovieWatchStatus, UserReview } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
-import { Star, Bookmark, Play, Flame, Trophy, Pencil } from 'lucide-react';
+import { Star, Bookmark, Play, Flame, Trophy, Pencil, Film } from 'lucide-react';
 import { SharePopover } from './SharePopover';
 import { TrackingStatusPicker } from './TrackingStatusPicker';
+import { calculateMovieRatingBreakdown, subscribeToMovieReviews } from '../lib/firestoreService';
 
 interface MovieCardProps {
   movie: Movie;
@@ -17,6 +18,7 @@ interface MovieCardProps {
   currentUser?: FirebaseUser | null;
   onOpenEdit?: (movie: Movie) => void;
   onOpenAuth?: () => void;
+  reviews?: UserReview[];
 }
 
 export const MovieCard: React.FC<MovieCardProps> = ({
@@ -30,18 +32,59 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   viewMode = 'grid',
   currentUser,
   onOpenEdit,
-  onOpenAuth
+  onOpenAuth,
+  reviews
 }) => {
   const [imgError, setImgError] = useState(false);
+  const [internalReviews, setInternalReviews] = useState<UserReview[]>(() => {
+    if (reviews !== undefined) {
+      return reviews.filter(r => r.movieId === movie.id);
+    }
+    return [];
+  });
+
+  // Subscribe to movie reviews if reviews prop was not passed down from parent
+  useEffect(() => {
+    if (reviews !== undefined) {
+      setInternalReviews(reviews.filter(r => r.movieId === movie.id));
+      return;
+    }
+
+    const unsub = subscribeToMovieReviews(movie.id, (loadedReviews) => {
+      setInternalReviews(loadedReviews || []);
+    });
+    return () => unsub();
+  }, [movie.id, reviews]);
+
+  const activeReviews = reviews !== undefined ? reviews.filter(r => r.movieId === movie.id) : internalReviews;
+  const ratingMetrics = useMemo(() => {
+    return calculateMovieRatingBreakdown(activeReviews);
+  }, [activeReviews]);
 
   // Reset imgError if movie posterUrl changes via onSnapshot stream
-  React.useEffect(() => {
+  useEffect(() => {
     setImgError(false);
-  }, [movie.posterUrl, movie.id]);
+  }, [movie.posterUrl, movie.backdropUrl, movie.id]);
 
-  // Fallback poster if image fails
-  const fallbackPoster = 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=800&auto=format&fit=crop';
-  const displayPoster = imgError ? fallbackPoster : (movie.posterUrl || fallbackPoster);
+  // Dynamic visual asset resolution: strictly eliminates hardcoded defaults and external stock placeholders
+  const rawPoster = movie.posterUrl && typeof movie.posterUrl === 'string' ? movie.posterUrl.trim() : '';
+  const rawBackdrop = movie.backdropUrl && typeof movie.backdropUrl === 'string' ? movie.backdropUrl.trim() : '';
+
+  const isPlaceholder = (url: string) => {
+    return (
+      url.includes('unsplash.com') ||
+      url.includes('placeholder.com') ||
+      url.includes('dummyimage.com') ||
+      url.includes('via.placeholder')
+    );
+  };
+
+  const dynamicVisualUrl = useMemo(() => {
+    if (imgError) return null;
+    if (rawPoster && !isPlaceholder(rawPoster)) return rawPoster;
+    if (rawBackdrop && !isPlaceholder(rawBackdrop)) return rawBackdrop;
+    return null;
+  }, [rawPoster, rawBackdrop, imgError]);
 
   const handleProtectedAction = (e: React.MouseEvent, action: () => void) => {
     e.stopPropagation();
@@ -63,16 +106,28 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           onClick={() => onSelect(movie)}
           className="flex items-center gap-4 cursor-pointer min-w-0 flex-1"
         >
-          <div className="relative w-16 h-24 sm:w-20 sm:h-28 rounded-xl overflow-hidden bg-slate-950 shrink-0 shadow-md">
-            <img 
-              src={displayPoster} 
-              alt={movie.title}
-              onError={() => setImgError(true)}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              loading="lazy"
-            />
+          <div className="relative w-16 h-24 sm:w-20 sm:h-28 rounded-xl overflow-hidden bg-slate-950 shrink-0 shadow-md border border-slate-800/80 flex items-center justify-center">
+            {dynamicVisualUrl ? (
+              <img 
+                src={dynamicVisualUrl} 
+                alt={movie.title}
+                onError={() => setImgError(true)}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-full h-full p-2 flex flex-col items-center justify-center text-center bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/70 group-hover:from-slate-800 transition-colors">
+                <Film className="w-5 h-5 text-emerald-400 mb-1 shrink-0" />
+                <span className="text-[10px] font-bold text-white line-clamp-2 leading-tight">
+                  {movie.title}
+                </span>
+                <span className="text-[9px] text-emerald-400 font-semibold mt-0.5">
+                  {movie.releaseYear}
+                </span>
+              </div>
+            )}
             {movie.featured && (
-              <span className="absolute top-1 left-1 p-0.5 rounded bg-amber-500 text-slate-950 shadow">
+              <span className="absolute top-1 left-1 p-0.5 rounded bg-amber-500 text-slate-950 shadow z-10">
                 <Flame className="w-3 h-3 fill-current" />
               </span>
             )}
@@ -112,10 +167,24 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-800 shrink-0">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/60 shadow-inner">
-            <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-            <span className="text-sm font-bold text-white">{movie.rating.toFixed(1)}</span>
-          </div>
+          {ratingMetrics.total > 0 ? (
+            <div 
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/60 shadow-inner"
+              title={`${ratingMetrics.total} community review${ratingMetrics.total === 1 ? '' : 's'}`}
+            >
+              <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+              <span className="text-sm font-bold text-white">{ratingMetrics.average10}</span>
+              <span className="text-[10px] text-slate-400">/10</span>
+            </div>
+          ) : (
+            <div 
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/50 border border-slate-800/80 text-slate-400 shadow-inner"
+              title="No community reviews yet"
+            >
+              <Star className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs font-semibold text-slate-400">Unrated</span>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <button
@@ -187,17 +256,50 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         onClick={() => onSelect(movie)}
         className="relative aspect-[3/4] w-full overflow-hidden bg-slate-950 cursor-pointer"
       >
-        <img 
-          src={displayPoster} 
-          alt={movie.title}
-          onError={() => setImgError(true)}
-          className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
-          loading="lazy"
-        />
+        {dynamicVisualUrl ? (
+          <img 
+            src={dynamicVisualUrl} 
+            alt={movie.title}
+            onError={() => setImgError(true)}
+            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-full h-full p-6 flex flex-col justify-between bg-gradient-to-br from-slate-900 via-[#0a101d] to-emerald-950/80 relative overflow-hidden group-hover:to-emerald-950 transition-all duration-500">
+            {/* Ambient Background Aura */}
+            <div className="absolute -top-12 -right-12 w-36 h-36 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute -bottom-12 -left-12 w-36 h-36 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="pt-10 z-10">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3 shadow-inner">
+                <Film className="w-6 h-6 text-emerald-400" />
+              </div>
+              <span className="text-[10px] uppercase tracking-widest font-extrabold text-emerald-400/90 block mb-1">
+                {movie.era.split('(')[0].trim()}
+              </span>
+              <h4 className="text-lg font-black text-white leading-snug line-clamp-3 font-cinema group-hover:text-emerald-300 transition-colors">
+                {movie.title}
+              </h4>
+            </div>
+
+            <div className="z-10 pb-2">
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {Array.from(new Set(movie.genres)).slice(0, 2).map((g, idx) => (
+                  <span key={`${g}-${idx}`} className="text-[10px] font-semibold text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/60">
+                    {g}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 line-clamp-1">
+                Dir: {movie.director}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Cinematic gradient depth */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
-        <div className="absolute inset-0 bg-black/15 group-hover:bg-transparent transition-colors duration-300" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-black/15 group-hover:bg-transparent transition-colors duration-300 pointer-events-none" />
 
         {/* Top Floating Bar: Badges Left, Actions Right */}
         <div className="absolute top-0 inset-x-0 p-3 sm:p-3.5 flex items-center justify-between z-10 bg-gradient-to-b from-slate-950/85 via-slate-950/40 to-transparent pointer-events-none">
@@ -280,11 +382,24 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 
         {/* Bottom Floating Stats Bar */}
         <div className="absolute bottom-0 inset-x-0 p-3 sm:p-3.5 flex items-center justify-between pointer-events-none bg-gradient-to-t from-slate-950/90 via-slate-950/30 to-transparent z-10">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-md pointer-events-auto">
-            <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-            <span className="font-bold text-white text-xs">{movie.rating.toFixed(1)}</span>
-            <span className="text-[10px] text-slate-400">/10</span>
-          </div>
+          {ratingMetrics.total > 0 ? (
+            <div 
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-md pointer-events-auto"
+              title={`${ratingMetrics.total} community review${ratingMetrics.total === 1 ? '' : 's'}`}
+            >
+              <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+              <span className="font-bold text-white text-xs">{ratingMetrics.average10}</span>
+              <span className="text-[10px] text-slate-400">/10</span>
+            </div>
+          ) : (
+            <div 
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/75 backdrop-blur-md border border-slate-800/80 shadow-md pointer-events-auto"
+              title="No community reviews yet"
+            >
+              <Star className="w-3.5 h-3.5 text-slate-500" />
+              <span className="font-semibold text-slate-400 text-xs">Unrated</span>
+            </div>
+          )}
           <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-md pointer-events-auto">
             {movie.runtimeMinutes || 105} min
           </span>

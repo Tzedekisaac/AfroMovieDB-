@@ -32,6 +32,62 @@ interface MovieDetailModalProps {
   onOpenAuth?: () => void;
 }
 
+const RelatedMovieCard: React.FC<{ rel: Movie; onSelect: (m: Movie) => void }> = ({ rel, onSelect }) => {
+  const [imgError, setImgError] = useState(false);
+  const rawPoster = rel.posterUrl && typeof rel.posterUrl === 'string' ? rel.posterUrl.trim() : '';
+  const rawBackdrop = rel.backdropUrl && typeof rel.backdropUrl === 'string' ? rel.backdropUrl.trim() : '';
+
+  const isPlaceholder = (url: string) => {
+    return (
+      url.includes('unsplash.com') ||
+      url.includes('placeholder.com') ||
+      url.includes('dummyimage.com') ||
+      url.includes('via.placeholder')
+    );
+  };
+
+  const dynamicUrl = useMemo(() => {
+    if (imgError) return null;
+    if (rawPoster && !isPlaceholder(rawPoster)) return rawPoster;
+    if (rawBackdrop && !isPlaceholder(rawBackdrop)) return rawBackdrop;
+    return null;
+  }, [rawPoster, rawBackdrop, imgError]);
+
+  return (
+    <div
+      onClick={() => onSelect(rel)}
+      className="group bg-slate-900/60 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
+    >
+      <div className="aspect-[3/4] overflow-hidden bg-slate-950 flex items-center justify-center">
+        {dynamicUrl ? (
+          <img
+            src={dynamicUrl}
+            alt={rel.title}
+            onError={() => setImgError(true)}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-full h-full p-2 flex flex-col items-center justify-center text-center bg-gradient-to-br from-slate-900 to-emerald-950/70">
+            <Film className="w-6 h-6 text-emerald-400/80 mb-1" />
+            <span className="text-[10px] font-bold text-white line-clamp-2">
+              {rel.title}
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="p-2 space-y-0.5">
+        <p className="text-xs font-bold text-white group-hover:text-emerald-400 truncate">
+          {rel.title}
+        </p>
+        <p className="text-[10px] text-slate-400">
+          {rel.releaseYear} • Dir: {rel.director.split(' ')[0]}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   movie,
   onClose,
@@ -54,6 +110,52 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+
+  const [backdropError, setBackdropError] = useState(false);
+  const [posterError, setPosterError] = useState(false);
+
+  useEffect(() => {
+    setBackdropError(false);
+    setPosterError(false);
+  }, [movie?.id, movie?.backdropUrl, movie?.posterUrl]);
+
+  const isPlaceholderUrl = (url: string) => {
+    return (
+      url.includes('unsplash.com') ||
+      url.includes('placeholder.com') ||
+      url.includes('dummyimage.com') ||
+      url.includes('via.placeholder')
+    );
+  };
+
+  const rawPoster = movie?.posterUrl && typeof movie.posterUrl === 'string' ? movie.posterUrl.trim() : '';
+  const rawBackdrop = movie?.backdropUrl && typeof movie.backdropUrl === 'string' ? movie.backdropUrl.trim() : '';
+
+  // Dynamic banner visual resolution: strictly avoids hardcoded defaults or placeholders
+  const dynamicBannerUrl = useMemo(() => {
+    if (backdropError) {
+      if (rawPoster && rawPoster !== rawBackdrop && !posterError && !isPlaceholderUrl(rawPoster)) {
+        return rawPoster;
+      }
+      return null;
+    }
+    if (rawBackdrop && !isPlaceholderUrl(rawBackdrop)) return rawBackdrop;
+    if (rawPoster && !isPlaceholderUrl(rawPoster)) return rawPoster;
+    return null;
+  }, [rawBackdrop, rawPoster, backdropError, posterError]);
+
+  // Dynamic poster visual resolution: strictly avoids hardcoded defaults or placeholders
+  const dynamicPosterUrl = useMemo(() => {
+    if (posterError) {
+      if (rawBackdrop && rawBackdrop !== rawPoster && !backdropError && !isPlaceholderUrl(rawBackdrop)) {
+        return rawBackdrop;
+      }
+      return null;
+    }
+    if (rawPoster && !isPlaceholderUrl(rawPoster)) return rawPoster;
+    if (rawBackdrop && !isPlaceholderUrl(rawBackdrop)) return rawBackdrop;
+    return null;
+  }, [rawPoster, rawBackdrop, posterError, backdropError]);
 
   const handleRefreshMovie = async () => {
     if (!movie || isRefreshing) return;
@@ -189,14 +291,31 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         </button>
 
         {/* Hero Backdrop Banner */}
-        <div className="relative w-full overflow-hidden bg-slate-950 max-h-[35vh] sm:max-h-[50vh]">
-          <img
-            src={movie.backdropUrl || movie.posterUrl}
-            alt={movie.title}
-            className="w-full h-auto object-cover object-center max-h-[35vh] sm:max-h-[50vh]"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0e131d] via-[#0e131d]/60 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0e131d] via-transparent to-transparent hidden sm:block" />
+        <div className="relative w-full overflow-hidden bg-slate-950 min-h-[220px] max-h-[35vh] sm:max-h-[50vh] flex items-center justify-center">
+          {dynamicBannerUrl ? (
+            <img
+              src={dynamicBannerUrl}
+              alt={movie.title}
+              onError={() => setBackdropError(true)}
+              className="w-full h-auto object-cover object-center max-h-[35vh] sm:max-h-[50vh]"
+            />
+          ) : (
+            <div className="w-full h-[220px] sm:h-[300px] bg-gradient-to-br from-slate-950 via-[#0a1120] to-emerald-950/90 flex flex-col items-center justify-center text-center p-6 relative overflow-hidden">
+              <div className="absolute -top-16 -right-16 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-16 -left-16 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-2 shadow-inner z-10">
+                <Film className="w-7 h-7 text-emerald-400" />
+              </div>
+              <span className="text-xs uppercase tracking-widest font-extrabold text-emerald-400 z-10">
+                Nollywood Cinema Showcase
+              </span>
+              <h3 className="text-2xl sm:text-3xl font-extrabold text-white font-cinema mt-1 z-10">
+                {movie.title}
+              </h3>
+            </div>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0e131d] via-[#0e131d]/60 to-transparent pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#0e131d] via-transparent to-transparent hidden sm:block pointer-events-none" />
 
           {/* Quick Play Trailer on backdrop */}
           <div className="absolute inset-0 flex items-center justify-center">
@@ -217,12 +336,25 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         <div className="px-4 sm:px-6 lg:px-8 -mt-10 sm:-mt-16 relative z-10">
           <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
             {/* Responsive Poster Scaling */}
-            <div className="w-24 sm:w-32 md:w-40 aspect-[2/3] rounded-2xl overflow-hidden bg-slate-950 border-2 border-slate-700/80 shadow-2xl shrink-0">
-              <img
-                src={movie.posterUrl || movie.backdropUrl}
-                alt={movie.title}
-                className="w-full h-auto object-cover max-h-[35vh] sm:max-h-[50vh]"
-              />
+            <div className="w-24 sm:w-32 md:w-40 aspect-[2/3] rounded-2xl overflow-hidden bg-slate-950 border-2 border-slate-700/80 shadow-2xl shrink-0 flex items-center justify-center">
+              {dynamicPosterUrl ? (
+                <img
+                  src={dynamicPosterUrl}
+                  alt={movie.title}
+                  onError={() => setPosterError(true)}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full p-3 flex flex-col items-center justify-center text-center bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/80">
+                  <Film className="w-8 h-8 text-emerald-400 mb-2" />
+                  <span className="text-[11px] font-bold text-white line-clamp-3 leading-snug">
+                    {movie.title}
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-semibold mt-1">
+                    {movie.releaseYear}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Title & Metadata */}
@@ -548,27 +680,11 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {relatedMovies.map((rel) => (
-                  <div
+                  <RelatedMovieCard
                     key={rel.id}
-                    onClick={() => onSelectMovie(rel)}
-                    className="group bg-slate-900/60 hover:bg-slate-900 border border-slate-800 rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
-                  >
-                    <div className="aspect-[3/4] overflow-hidden bg-slate-950">
-                      <img
-                        src={rel.posterUrl}
-                        alt={rel.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                      />
-                    </div>
-                    <div className="p-2 space-y-0.5">
-                      <p className="text-xs font-bold text-white group-hover:text-emerald-400 truncate">
-                        {rel.title}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {rel.releaseYear} • Dir: {rel.director.split(' ')[0]}
-                      </p>
-                    </div>
-                  </div>
+                    rel={rel}
+                    onSelect={onSelectMovie}
+                  />
                 ))}
               </div>
             </div>

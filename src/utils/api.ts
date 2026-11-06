@@ -38,7 +38,7 @@ export {
 export const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
 export const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 export const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
-const TMDB_RESULT_PAGE_LIMIT = 20;
+const TMDB_RESULT_PAGE_LIMIT = 500;
 
 // In-memory reference for the logged-in user's custom TMDb API key
 let userCustomTmdbApiKey: string | null = null;
@@ -1358,19 +1358,25 @@ export function isDuplicateMovie(
  * Queries up to 15-20 pages deep across new releases.
  */
 export async function bulkSyncNigerianNewReleases(
-  maxMovies: number = 32,
+  maxMovies: number = Infinity,
   onProgress?: (syncedCount: number, total: number) => void,
   existingMovies: Movie[] = [],
-  maxPages: number = 15,
+  maxPages: number = Infinity,
   userId?: string
 ): Promise<Movie[]> {
   const syncedMovies: Movie[] = [];
   let page = 1;
-  const effectiveMaxPages = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(maxPages) || 1));
+  const effectiveMaxPages = Number.isFinite(maxPages)
+    ? Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(maxPages)))
+    : TMDB_RESULT_PAGE_LIMIT;
   const currentPool = [...existingMovies];
+  let totalAvailablePages = 1;
 
-  while (syncedMovies.length < maxMovies && page <= effectiveMaxPages) {
+  while (syncedMovies.length < maxMovies && page <= effectiveMaxPages && page <= totalAvailablePages) {
     const { candidates, totalPages } = await discoverNigerianMovies(page, 'release_date.desc');
+    if (typeof totalPages === 'number' && totalPages > 0) {
+      totalAvailablePages = totalPages;
+    }
     if (candidates.length === 0) break;
 
     for (const rawCandidate of candidates) {
@@ -1393,14 +1399,14 @@ export async function bulkSyncNigerianNewReleases(
         currentPool.push(movie);
 
         if (onProgress) {
-          onProgress(syncedMovies.length, maxMovies);
+          onProgress(syncedMovies.length, Number.isFinite(maxMovies) ? maxMovies : syncedMovies.length);
         }
       } catch (err) {
         console.warn(`Failed pulling details for ${candidate.title}:`, err);
       }
     }
 
-    if (page >= totalPages) break;
+    if (page >= totalAvailablePages) break;
     page++;
     await sleep(60);
   }
@@ -1495,12 +1501,13 @@ const CLASSIC_QUERIES_BY_ERA: Record<string, string[]> = {
 export async function runDeepHistoricalSweep(
   existingMovies: Movie[],
   onProgress?: (progress: HistoricalSweepProgress) => void,
-  pagesPerEra: number = 20,
+  pagesPerEra: number = Infinity,
   signal?: AbortSignal
 ): Promise<{ newMovies: Movie[]; summary: string; cancelled: boolean }> {
-  // Scan up to 20 result pages for each decade, respecting the available page count.
-  const requestedPages = Number.isFinite(pagesPerEra) ? Math.floor(pagesPerEra) : 20;
-  const effectivePagesPerEra = Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, requestedPages));
+  // Respect pagesPerEra if finite, otherwise paginate until each era's source is exhausted
+  const effectivePagesPerEra = Number.isFinite(pagesPerEra)
+    ? Math.max(1, Math.min(TMDB_RESULT_PAGE_LIMIT, Math.floor(pagesPerEra)))
+    : TMDB_RESULT_PAGE_LIMIT;
 
   const erasToScan = [
     { label: '1990s Era', gte: '1990-01-01', lte: '1999-12-31' },
@@ -1510,11 +1517,9 @@ export async function runDeepHistoricalSweep(
     { label: '1980s Era', gte: '1980-01-01', lte: '1989-12-31' }
   ];
 
-  const totalSteps = erasToScan.length * effectivePagesPerEra;
-  let currentStep = 0;
   let currentDecade = erasToScan[0].label;
   let currentPage = 1;
-  let currentTotalPages = effectivePagesPerEra;
+  let currentTotalPages = 1;
   let currentPercent = 0;
   const pool = [...existingMovies];
   const newImported: Movie[] = [];
@@ -1545,18 +1550,18 @@ export async function runDeepHistoricalSweep(
       console.warn('Non-Nigerian movie purge before sweep warning:', purgeErr);
     }
 
-    for (const era of erasToScan) {
+    for (let eraIdx = 0; eraIdx < erasToScan.length; eraIdx++) {
+      const era = erasToScan[eraIdx];
       throwIfAborted(signal);
       currentDecade = era.label;
 
-      // Query multiple pages per era using broad Nigerian origin parameters.
-      for (let page = 1; page <= effectivePagesPerEra; page++) {
+      let page = 1;
+      let eraTotalPages = 1;
+
+      // Complete pagination loop (using page++) until era source is completely exhausted
+      while (page <= eraTotalPages && page <= effectivePagesPerEra) {
         throwIfAborted(signal);
         currentPage = page;
-        currentTotalPages = effectivePagesPerEra;
-        currentStep++;
-        currentPercent = Math.min(95, Math.round((currentStep / totalSteps) * 100));
-        publishProgress();
 
         try {
           const { candidates, totalPages } = await discoverNigerianMovies(
@@ -1566,7 +1571,14 @@ export async function runDeepHistoricalSweep(
             signal
           );
           throwIfAborted(signal);
-          currentTotalPages = Math.max(1, Math.min(effectivePagesPerEra, totalPages || 1));
+          if (typeof totalPages === 'number' && totalPages > 0) {
+            eraTotalPages = Math.min(effectivePagesPerEra, totalPages);
+          }
+          currentTotalPages = eraTotalPages;
+          currentPercent = Math.min(
+            95,
+            Math.round(((eraIdx + (page / Math.max(1, eraTotalPages))) / erasToScan.length) * 100)
+          );
           publishProgress();
 
           for (const rawCandidate of candidates) {
@@ -1588,15 +1600,17 @@ export async function runDeepHistoricalSweep(
             }
           }
 
-          // Break if TMDb catalogue doesn't have any more pages for this date range.
-          if (page >= currentTotalPages) break;
+          if (candidates.length === 0 || page >= eraTotalPages) break;
 
           await sleep(75);
           throwIfAborted(signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           console.warn(`Error during historical sweep of ${era.label} page ${page}:`, error);
+          break;
         }
+
+        page++;
       }
 
       // Targeted searches capture iconic classic Nollywood milestones not found by discovery.
@@ -1693,8 +1707,8 @@ export async function checkAndRunDailySync(
       } catch {}
     }
 
-    // Perform background sync (fetching up to 24 fresh Nigerian releases with strict deduplication)
-    const freshMovies = await bulkSyncNigerianNewReleases(24, onProgress, existingMovies, 15, userId);
+    // Perform background sync (fetching fresh Nigerian releases with complete pagination and strict deduplication)
+    const freshMovies = await bulkSyncNigerianNewReleases(undefined, onProgress, existingMovies, undefined, userId);
     const verifiedFresh = freshMovies.filter(isNigerianMovie);
     const sanitizedFresh = verifiedFresh.map(movie => sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie);
 

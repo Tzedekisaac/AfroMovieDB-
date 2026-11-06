@@ -248,58 +248,95 @@ export async function runMovieSync() {
   const db = initializeFirebase();
   console.log('[Sync] Beginning hourly Nigerian movie sync from TMDb to Firestore...');
 
-  let existingSnapshot;
+  const existingIds = new Set();
+  const existingTmdbIds = new Set();
+  const existingNormalizedTitles = new Set();
+  let totalExistingCount = 0;
+
+  // 1. Paginate through existing custom_movies using lastVisible cursor until Firestore is completely exhausted
   try {
-    existingSnapshot = await db.collection('custom_movies').get();
+    let lastVisibleDoc = null;
+    let hasMoreExisting = true;
+    while (hasMoreExisting) {
+      let query = db.collection('custom_movies').orderBy('__name__').limit(500);
+      if (lastVisibleDoc) {
+        query = query.startAfter(lastVisibleDoc);
+      }
+      const snap = await query.get();
+      if (snap.empty) {
+        hasMoreExisting = false;
+        break;
+      }
+      snap.forEach((docSnap) => {
+        existingIds.add(docSnap.id);
+        const data = docSnap.data();
+        if (data.tmdbId) {
+          existingTmdbIds.add(Number(data.tmdbId));
+        }
+        if (data.title) {
+          existingNormalizedTitles.add(normalizeTitle(data.title));
+        }
+        totalExistingCount++;
+      });
+      lastVisibleDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < 500) {
+        hasMoreExisting = false;
+      }
+    }
   } catch (err) {
     throw new Error(`Failed to query Firestore 'custom_movies' collection: ${err.message}`);
   }
 
-  const existingIds = new Set();
-  const existingTmdbIds = new Set();
-  const existingNormalizedTitles = new Set();
+  console.log(`[Sync] Loaded ${totalExistingCount} existing movie records from Firestore across all paginated pages.`);
 
-  existingSnapshot.forEach((docSnap) => {
-    existingIds.add(docSnap.id);
-    const data = docSnap.data();
-    if (data.tmdbId) {
-      existingTmdbIds.add(Number(data.tmdbId));
-    }
-    if (data.title) {
-      existingNormalizedTitles.add(normalizeTitle(data.title));
-    }
-  });
-
-  console.log(`[Sync] Loaded ${existingSnapshot.size} existing movie records from Firestore.`);
-
-  // 1. Discover recent Nigerian movies from TMDb (pages 1 and 2, plus indigenous languages)
+  // 2. Discover Nigerian movies from TMDb using complete page++ pagination loops until source database is completely exhausted
   const candidateMap = new Map();
-  const discoveryEndpoints = [
-    `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=release_date.desc&include_adult=false&page=1`,
-    `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&sort_by=release_date.desc&include_adult=false&page=2`,
-    `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&with_origin_country=NG&with_original_language=yo|ig|ha|pcm&sort_by=release_date.desc&include_adult=false&page=1`
+  const discoveryQueries = [
+    'with_origin_country=NG&sort_by=release_date.desc&include_adult=false',
+    'with_origin_country=NG&sort_by=primary_release_date.asc&include_adult=false',
+    'with_origin_country=NG&with_original_language=yo|ig|ha|pcm&sort_by=release_date.desc&include_adult=false',
+    'with_origin_country=NG&with_keywords=207317|263548&sort_by=release_date.desc&include_adult=false'
   ];
 
-  for (const url of discoveryEndpoints) {
-    const res = await fetchWithRetry(url);
-    if (res && res.ok) {
+  for (const queryParams of discoveryQueries) {
+    let page = 1;
+    let totalPages = 1;
+
+    console.log(`[Sync] Starting exhaustive pagination for query: ${queryParams}`);
+    while (page <= totalPages) {
+      const url = `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&${queryParams}&page=${page}`;
+      const res = await fetchWithRetry(url);
+      if (!res || !res.ok) {
+        console.warn(`[Sync] Request failed on page ${page} (${res ? res.status : 'no response'}). Halting this query loop.`);
+        break;
+      }
+
       const data = await res.json();
-      if (Array.isArray(data.results)) {
-        for (const item of data.results) {
-          if (item && item.id && !candidateMap.has(item.id)) {
-            // Pre-filter with shared candidate eligibility helper
-            if (isDiscoveryCandidateEligible(item)) {
-              candidateMap.set(item.id, item);
-            }
+      if (typeof data.total_pages === 'number' && data.total_pages > 0) {
+        totalPages = data.total_pages;
+      }
+
+      if (!Array.isArray(data.results) || data.results.length === 0) {
+        break;
+      }
+
+      for (const item of data.results) {
+        if (item && item.id && !candidateMap.has(item.id)) {
+          if (isDiscoveryCandidateEligible(item)) {
+            candidateMap.set(item.id, item);
           }
         }
       }
+
+      page++;
+      await sleep(50);
     }
+    console.log(`[Sync] Finished query pagination (${candidateMap.size} total candidates discovered so far).`);
   }
 
-  console.log(`[Sync] Discovered ${candidateMap.size} eligible candidate titles from TMDb.`);
+  console.log(`[Sync] Discovered ${candidateMap.size} total eligible candidate titles from TMDb.`);
 
-  // 2. Deduplicate against existing Firestore entries
+  // 3. Deduplicate against existing Firestore entries
   const newCandidates = [];
   for (const cand of candidateMap.values()) {
     if (existingTmdbIds.has(Number(cand.id))) continue;
@@ -308,9 +345,9 @@ export async function runMovieSync() {
     newCandidates.push(cand);
   }
 
-  console.log(`[Sync] Identified ${newCandidates.length} new candidates to inspect and ingest.`);
+  console.log(`[Sync] Identified ${newCandidates.length} new candidates to inspect, enrich, and ingest.`);
 
-  // 3. Handle zero new candidates without bypassing status audit logging
+  // 4. Handle zero new candidates without bypassing status audit logging
   if (newCandidates.length === 0) {
     console.log('[Sync] Catalogue is fully up to date. Zero new titles to write.');
     await db.collection('system_meta').doc('sync_status').set(
@@ -322,22 +359,21 @@ export async function runMovieSync() {
         moviesVerified: 0,
         moviesRejected: 0,
         newMoviesAdded: 0,
-        totalCatalogSize: existingSnapshot.size,
+        totalCatalogSize: totalExistingCount,
         source: 'github_actions',
         completedAt: new Date().toISOString()
       },
       { merge: true }
     );
     console.log('[Sync] Status audit log updated: 0 new titles (success).');
-    return { addedCount: 0, totalExisting: existingSnapshot.size };
+    return { addedCount: 0, totalExisting: totalExistingCount };
   }
 
-  // 4. Enrich metadata, credits, and videos for new candidates (up to 30 per run)
+  // 5. Enrich metadata, credits, and videos for ALL new candidates without hardcoded limits or array length caps
   const moviesToWrite = [];
   let rejectedCount = 0;
-  const limit = Math.min(newCandidates.length, 30);
 
-  for (let i = 0; i < limit; i++) {
+  for (let i = 0; i < newCandidates.length; i++) {
     const cand = newCandidates[i];
     try {
       const detailUrl = `${TMDB_BASE_URL}/movie/${cand.id}?api_key=${apiKey}&append_to_response=credits,videos`;
@@ -411,16 +447,16 @@ export async function runMovieSync() {
       }
       const era = determineEra(releaseYear);
 
-      // Artwork
+      // Artwork: strictly enforce dynamic asset mapping, eliminating hardcoded placeholders
       const posterUrl = details.poster_path
         ? `${TMDB_IMAGE_BASE}/w780${details.poster_path}`
         : cand.poster_path
         ? `${TMDB_IMAGE_BASE}/w780${cand.poster_path}`
-        : FALLBACK_POSTER;
+        : '';
 
       const backdropUrl = details.backdrop_path
         ? `${TMDB_IMAGE_BASE}/original${details.backdrop_path}`
-        : posterUrl || FALLBACK_BACKDROP;
+        : posterUrl || '';
 
       // Trailer
       let trailerYoutubeId = '';
@@ -528,7 +564,7 @@ export async function runMovieSync() {
       moviesVerified: moviesToWrite.length,
       moviesRejected: rejectedCount,
       newMoviesAdded: moviesToWrite.length,
-      totalCatalogSize: existingSnapshot.size + moviesToWrite.length,
+      totalCatalogSize: totalExistingCount + moviesToWrite.length,
       source: 'github_actions',
       completedAt: new Date().toISOString()
     },
@@ -536,7 +572,7 @@ export async function runMovieSync() {
   );
 
   console.log('[Sync] Hourly background sync completed successfully.');
-  return { addedCount: moviesToWrite.length, totalExisting: existingSnapshot.size + moviesToWrite.length };
+  return { addedCount: moviesToWrite.length, totalExisting: totalExistingCount + moviesToWrite.length };
 }
 
 // Top-level CLI entry point

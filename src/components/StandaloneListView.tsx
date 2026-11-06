@@ -6,6 +6,7 @@ import {
   ExternalLink, Globe, Lock, Play, Pencil, Bookmark 
 } from 'lucide-react';
 import { MovieCard } from './MovieCard';
+import { MovieGrid } from './MovieGrid';
 
 interface StandaloneListViewProps {
   list: CustomUserList;
@@ -249,23 +250,18 @@ export const StandaloneListView: React.FC<StandaloneListViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="w-full max-w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6 lg:gap-7">
-            {listMovies.map((movie) => (
-              <MovieCard
-                key={movie.id}
-                movie={movie}
-                onSelect={onSelectMovie}
-                onOpenTrailer={onOpenTrailer}
-                isWatchlisted={watchlist.includes(movie.id)}
-                onToggleWatchlist={onToggleWatchlist}
-                watchStatus={trackingMap?.get(movie.id)?.status || (watchlist.includes(movie.id) ? 'plan_to_watch' : null)}
-                onUpdateStatus={onUpdateStatus}
-                viewMode="grid"
-                currentUser={currentUser}
-                onOpenAuth={onOpenAuth}
-              />
-            ))}
-          </div>
+          <MovieGrid
+            movies={listMovies}
+            onSelectMovie={onSelectMovie}
+            onOpenTrailer={onOpenTrailer}
+            watchlistIds={watchlist}
+            onToggleWatchlist={onToggleWatchlist}
+            trackingMap={trackingMap}
+            onUpdateStatus={onUpdateStatus}
+            viewMode="grid"
+            currentUser={currentUser}
+            onOpenAuth={onOpenAuth}
+          />
         )}
       </main>
 

@@ -98,12 +98,10 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
   }, [movieId]);
 
   // Aggregate rating counts and 5-star to 1-star horizontal distribution breakdown
+  // calculated dynamically solely from live Firestore user reviews
   const ratingBreakdown: MovieRatingBreakdown = useMemo(() => {
-    return calculateMovieRatingBreakdown(reviews, {
-      rating: movie?.rating,
-      ratingCount: movie?.ratingCount
-    });
-  }, [reviews, movie?.rating, movie?.ratingCount]);
+    return calculateMovieRatingBreakdown(reviews);
+  }, [reviews]);
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,7 +170,7 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
           </p>
         </div>
         <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
-          {reviews.length} Review{reviews.length !== 1 ? 's' : ''}
+          {reviews.length > 0 ? `${reviews.length} Review${reviews.length !== 1 ? 's' : ''}` : 'No reviews yet'}
         </span>
       </div>
 
@@ -181,92 +179,104 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
         id="movie-ratings-distribution-chart"
         className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-inner"
       >
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
-          
-          {/* Left Column: Overall Score & Star Summary */}
-          <div className="md:col-span-4 flex flex-col items-center justify-center text-center p-3 sm:p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 shadow-xs">
-            <div className="text-4xl sm:text-5xl font-black text-amber-400 tracking-tight flex items-baseline justify-center gap-1 font-mono">
-              <span>{ratingBreakdown.average5}</span>
-              <span className="text-sm font-normal text-slate-400">/ 5</span>
+        {ratingBreakdown.total === 0 ? (
+          <div className="py-6 sm:py-8 px-4 text-center flex flex-col items-center justify-center space-y-2">
+            <div className="w-12 h-12 rounded-full bg-slate-950/80 border border-slate-800 flex items-center justify-center text-amber-400/60 mb-1">
+              <Star className="w-6 h-6" />
             </div>
-
-            {/* 5-Star Visual Icons */}
-            <div className="flex items-center gap-1 my-2">
-              {[1, 2, 3, 4, 5].map((star) => {
-                const ratingVal = parseFloat(ratingBreakdown.average5);
-                const isFull = ratingVal >= star;
-                const isHalf = !isFull && ratingVal >= star - 0.5;
-                return (
-                  <Star 
-                    key={star} 
-                    className={`w-4 h-4 ${
-                      isFull 
-                        ? 'text-amber-400 fill-amber-400' 
-                        : isHalf 
-                          ? 'text-amber-400 fill-amber-400/50' 
-                          : 'text-slate-700'
-                    }`} 
-                  />
-                );
-              })}
-            </div>
-
-            <div className="text-xs text-slate-300 font-medium">
-              {ratingBreakdown.average10} / 10 Nollywood Score
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
-              Based on {ratingBreakdown.total.toLocaleString()} {ratingBreakdown.total === 1 ? 'rating' : 'ratings'}
-            </div>
+            <h4 className="text-base font-bold text-white">No reviews yet</h4>
+            <p className="text-xs text-slate-400 max-w-sm">
+              Be the first to rate and review this film! The community score and rating breakdown will be calculated dynamically once reviews are submitted.
+            </p>
           </div>
-
-          {/* Right Column: Horizontal Bar Chart Breakdown (5 Stars down to 1 Star) */}
-          <div className="md:col-span-8 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-1 font-medium">
-              <span>Rating Distribution</span>
-              <span className="text-[11px] text-slate-500">{ratingBreakdown.source}</span>
-            </div>
-
-            {ratingBreakdown.stars.map(({ star, count, percent }) => (
-              <div key={star} className="flex items-center gap-3 text-xs">
-                {/* Star label */}
-                <div className="flex items-center gap-1 w-12 text-slate-300 font-semibold shrink-0">
-                  <span>{star}</span>
-                  <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                </div>
-
-                {/* Horizontal Progress Track & Fill Bar */}
-                <div className="flex-1 h-3 rounded-full bg-slate-950 border border-slate-800/80 overflow-hidden relative shadow-inner">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      star === 5
-                        ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
-                        : star === 4
-                          ? 'bg-gradient-to-r from-emerald-500 to-amber-400'
-                          : star === 3
-                            ? 'bg-gradient-to-r from-amber-500 to-amber-400'
-                            : star === 2
-                              ? 'bg-gradient-to-r from-amber-600 to-orange-500'
-                              : 'bg-gradient-to-r from-rose-500 to-rose-400'
-                    }`}
-                    style={{ width: `${percent}%` }}
-                    role="progressbar"
-                    aria-valuenow={percent}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    title={`${count} ratings (${percent}%)`}
-                  />
-                </div>
-
-                {/* Percentage & Count display */}
-                <div className="w-20 text-right font-mono text-[11px] text-slate-400 shrink-0">
-                  <span className="text-slate-200 font-semibold">{percent}%</span>
-                  <span className="text-slate-500 text-[10px] ml-1">({count})</span>
-                </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+            
+            {/* Left Column: Overall Score & Star Summary */}
+            <div className="md:col-span-4 flex flex-col items-center justify-center text-center p-3 sm:p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 shadow-xs">
+              <div className="text-4xl sm:text-5xl font-black text-amber-400 tracking-tight flex items-baseline justify-center gap-1 font-mono">
+                <span>{ratingBreakdown.average5}</span>
+                <span className="text-sm font-normal text-slate-400">/ 5</span>
               </div>
-            ))}
-          </div>
 
-        </div>
+              {/* 5-Star Visual Icons */}
+              <div className="flex items-center gap-1 my-2">
+                {[1, 2, 3, 4, 5].map((star) => {
+                  const ratingVal = parseFloat(ratingBreakdown.average5);
+                  const isFull = ratingVal >= star;
+                  const isHalf = !isFull && ratingVal >= star - 0.5;
+                  return (
+                    <Star 
+                      key={star} 
+                      className={`w-4 h-4 ${
+                        isFull 
+                          ? 'text-amber-400 fill-amber-400' 
+                          : isHalf 
+                            ? 'text-amber-400 fill-amber-400/50' 
+                            : 'text-slate-700'
+                      }`} 
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="text-xs text-slate-300 font-medium">
+                {ratingBreakdown.average10} / 10 Nollywood Score
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Based on {ratingBreakdown.total.toLocaleString()} {ratingBreakdown.total === 1 ? 'rating' : 'ratings'}
+              </div>
+            </div>
+
+            {/* Right Column: Horizontal Bar Chart Breakdown (5 Stars down to 1 Star) */}
+            <div className="md:col-span-8 space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1 font-medium">
+                <span>Rating Distribution</span>
+                <span className="text-[11px] text-slate-500">{ratingBreakdown.source}</span>
+              </div>
+
+              {ratingBreakdown.stars.map(({ star, count, percent }) => (
+                <div key={star} className="flex items-center gap-3 text-xs">
+                  {/* Star label */}
+                  <div className="flex items-center gap-1 w-12 text-slate-300 font-semibold shrink-0">
+                    <span>{star}</span>
+                    <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                  </div>
+
+                  {/* Horizontal Progress Track & Fill Bar */}
+                  <div className="flex-1 h-3 rounded-full bg-slate-950 border border-slate-800/80 overflow-hidden relative shadow-inner">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        star === 5
+                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                          : star === 4
+                            ? 'bg-gradient-to-r from-emerald-500 to-amber-400'
+                            : star === 3
+                              ? 'bg-gradient-to-r from-amber-500 to-amber-400'
+                              : star === 2
+                                ? 'bg-gradient-to-r from-amber-600 to-orange-500'
+                                : 'bg-gradient-to-r from-rose-500 to-rose-400'
+                      }`}
+                      style={{ width: `${percent}%` }}
+                      role="progressbar"
+                      aria-valuenow={percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      title={`${count} ratings (${percent}%)`}
+                    />
+                  </div>
+
+                  {/* Percentage & Count display */}
+                  <div className="w-20 text-right font-mono text-[11px] text-slate-400 shrink-0">
+                    <span className="text-slate-200 font-semibold">{percent}%</span>
+                    <span className="text-slate-500 text-[10px] ml-1">({count})</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>
+        )}
       </div>
 
       {/* Write a Review Box */}

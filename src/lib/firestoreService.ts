@@ -1,13 +1,20 @@
 import { 
   collection, doc, getDoc, setDoc, updateDoc, 
   deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, 
-  Timestamp, getDocs, writeBatch
+  Timestamp, getDocs, writeBatch, startAfter, limit, QueryDocumentSnapshot,
+  Query, DocumentData, QuerySnapshot
 } from 'firebase/firestore';
 import { db, auth } from './firebase.ts';
 import type { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types.ts';
 import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections.ts';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie.ts';
-import { isNigerianMovie, parseSpokenLanguages } from '../utils/nigerianMovieValidator.ts';
+import { 
+  isNigerianMovie, 
+  parseSpokenLanguages, 
+  extractOriginCountries, 
+  NIGERIAN_ORIGIN_COUNTRY, 
+  KNOWN_FOREIGN_TITLES_LOWER 
+} from '../utils/nigerianMovieValidator.ts';
 import { sanitizeMovie } from '../utils/api.ts';
 
 export const OperationType = {
@@ -98,20 +105,150 @@ export function stripUndefined<T>(obj: T): T {
 }
 
 /**
- * Prepares movie data safely for Firestore by providing safe fallbacks for optional or missing fields
- * (like nativeTitle, directorAvatarUrl, trailerYoutubeId, boxOffice, quote, etc.) and stripping any undefined values.
+ * Strips known hardcoded placeholder domains or stock dummy patterns.
+ * Guarantees that generic placeholder URLs (e.g. Unsplash placeholders or placeholder.com)
+ * are completely eliminated and never persisted to Firestore as ghost artwork.
+ */
+export function sanitizeVisualAssetUrl(url?: string | null): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return '';
+  }
+  // Strip hardcoded placeholder domains, unsplash stock dummy images, or generic image placeholders
+  if (
+    trimmed.includes('unsplash.com') ||
+    trimmed.includes('placeholder.com') ||
+    trimmed.includes('dummyimage.com') ||
+    trimmed.includes('via.placeholder') ||
+    trimmed.includes('placekitten.com')
+  ) {
+    return '';
+  }
+  return trimmed;
+}
+
+// Known international studio patterns that should not appear in authentic Nollywood assets
+const FOREIGN_ARTWORK_URL_PATTERNS = [
+  /disney/i,
+  /marvel/i,
+  /hollywood/i,
+  /pixar/i,
+  /dreamworks/i,
+  /bollywood/i,
+  /anime/i,
+  /korean/i,
+  /wallace.*gromit/i,
+  /blade.*runner/i,
+  /star.*wars/i,
+  /harry.*potter/i
+];
+
+export interface MovieAssetAndOriginValidationResult {
+  isValid: boolean;
+  reason?: string;
+  violations: string[];
+}
+
+/**
+ * Strict validation rules for current and future data imports:
+ * 1. Cross-references banners/posters and metadata against official regional origins (Nigeria / 'NG')
+ * 2. Rejects foreign studio artwork or mismatched international visual assets
+ * 3. Prevents ghost data (empty/corrupted titles, invalid IDs, dummy placeholder strings)
+ */
+export function validateMovieAssetsAndRegion(
+  movie: Partial<Movie> & Record<string, any>
+): MovieAssetAndOriginValidationResult {
+  const violations: string[] = [];
+
+  // 1. Ghost Data Checks: ID, Title, Release Year
+  const id = String(movie.id || '').trim();
+  if (!id || id === 'null' || id === 'undefined' || id.length < 2) {
+    violations.push('Missing or invalid movie identifier (ghost ID)');
+  }
+
+  const title = String(movie.title || '').trim();
+  if (!title || title.length < 2) {
+    violations.push('Movie title is required and cannot be empty');
+  }
+
+  const normalizedTitle = title.toLowerCase();
+  const dummyGhostTitles = ['untitled', 'untitled nollywood film', 'test movie', 'sample', 'dummy', 'lorem ipsum'];
+  if (dummyGhostTitles.includes(normalizedTitle)) {
+    violations.push(`Ghost data placeholder title "${title}" is not permitted for catalog import`);
+  }
+
+  // Release year validation
+  const currentYear = new Date().getFullYear();
+  const releaseYear = Number(movie.releaseYear);
+  if (isNaN(releaseYear) || releaseYear < 1950 || releaseYear > currentYear + 2) {
+    violations.push(`Invalid release year (${movie.releaseYear}); must be between 1950 and ${currentYear + 2}`);
+  }
+
+  // 2. Official Regional Origin Cross-Referencing
+  // Check against known foreign titles blacklist
+  const isKnownForeign = KNOWN_FOREIGN_TITLES_LOWER.some((foreign) =>
+    normalizedTitle === foreign || (foreign.length > 5 && normalizedTitle.startsWith(foreign + ':'))
+  );
+  if (isKnownForeign) {
+    violations.push(`Title "${title}" matches a known foreign / non-Nigerian production`);
+  }
+
+  // Cross-reference origin countries against official Nigerian origin ('NG')
+  const originCountries = extractOriginCountries({
+    origin_country: movie.originCountry,
+    production_countries: movie.production_countries || movie.productionCountries
+  });
+  if (originCountries.length > 0 && !originCountries.includes(NIGERIAN_ORIGIN_COUNTRY)) {
+    violations.push(`Regional origin mismatch: foreign production countries (${originCountries.join(', ')}) without Nigerian origin`);
+  }
+
+  // Verify overall Nigerian criteria using authoritative validator
+  if (!isNigerianMovie(movie)) {
+    violations.push(`Movie "${title}" does not meet authoritative Nigerian regional origin criteria`);
+  }
+
+  // 3. Artwork & Banner Cross-Referencing
+  const posterUrl = String(movie.posterUrl || '').trim();
+  const backdropUrl = String(movie.backdropUrl || '').trim();
+
+  // Cross-reference poster and backdrop against foreign studio patterns
+  if (posterUrl && FOREIGN_ARTWORK_URL_PATTERNS.some((pattern) => pattern.test(posterUrl))) {
+    violations.push('Poster URL contains foreign studio or international production markers');
+  }
+  if (backdropUrl && FOREIGN_ARTWORK_URL_PATTERNS.some((pattern) => pattern.test(backdropUrl))) {
+    violations.push('Backdrop banner URL contains foreign studio or international production markers');
+  }
+
+  const isValid = violations.length === 0;
+  return {
+    isValid,
+    reason: violations.length > 0 ? violations.join('; ') : undefined,
+    violations
+  };
+}
+
+/**
+ * Prepares movie data safely for Firestore:
+ * - Strictly enforces dynamic asset mapping for all banners and posters with zero hardcoded placeholders
+ * - Cross-references metadata and banners against official regional origins
+ * - Prevents ghost data from being persisted to Firestore
  */
 export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, any>): Record<string, any> {
+  // Dynamic asset mapping: clean out any hardcoded placeholders or ghost assets
+  const cleanedPoster = sanitizeVisualAssetUrl(movie.posterUrl);
+  const cleanedBackdrop = sanitizeVisualAssetUrl(movie.backdropUrl) || cleanedPoster;
+
   const safeData: Record<string, any> = {
     id: movie.id || '',
-    title: movie.title || 'Untitled Nollywood Film',
+    title: movie.title ? String(movie.title).trim() : 'Untitled Nollywood Film',
     nativeTitle: movie.nativeTitle ? String(movie.nativeTitle).trim() : '',
     tagline: movie.tagline ? String(movie.tagline).trim() : '',
     releaseYear: Number(movie.releaseYear) || new Date().getFullYear(),
-    director: movie.director || 'Nigerian Filmmaker Team',
-    directorAvatarUrl: movie.directorAvatarUrl || '',
+    director: movie.director ? String(movie.director).trim() : 'Nigerian Filmmaker Team',
+    directorAvatarUrl: movie.directorAvatarUrl ? String(movie.directorAvatarUrl).trim() : '',
     directorTmdbId: movie.directorTmdbId !== undefined && movie.directorTmdbId !== null ? Number(movie.directorTmdbId) : null,
-    producer: movie.producer || '',
+    producer: movie.producer ? String(movie.producer).trim() : '',
     leadCast: Array.isArray(movie.leadCast)
       ? movie.leadCast.map((c) => ({
           actor: c?.actor || '',
@@ -127,8 +264,8 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     rating: typeof movie.rating === 'number' && !isNaN(movie.rating) ? movie.rating : 8.0,
     ratingCount: Number(movie.ratingCount) || 1,
     boxOffice: movie.boxOffice || '',
-    posterUrl: movie.posterUrl || '',
-    backdropUrl: movie.backdropUrl || movie.posterUrl || '',
+    posterUrl: cleanedPoster,
+    backdropUrl: cleanedBackdrop,
     synopsis: movie.synopsis || '',
     culturalSignificance: movie.culturalSignificance || '',
     collections: movie.collections,
@@ -326,15 +463,15 @@ export interface MovieRatingBreakdown {
 
 /**
  * Derives accurate 5-star down to 1-star rating breakdown and aggregate score
- * linked specifically to a movie's reviews and rating metrics.
+ * calculated dynamically solely from live Firestore user reviews.
  */
 export function calculateMovieRatingBreakdown(
   movieReviews: UserReview[],
-  fallbackMovie?: { rating?: number; ratingCount?: number }
+  _fallbackMovie?: { rating?: number; ratingCount?: number }
 ): MovieRatingBreakdown {
   const starCounts: Record<5 | 4 | 3 | 2 | 1, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
 
-  if (movieReviews.length > 0) {
+  if (Array.isArray(movieReviews) && movieReviews.length > 0) {
     movieReviews.forEach((r) => {
       const rating = typeof r.rating === 'number' && !isNaN(r.rating) ? r.rating : 8;
       // Map 1-10 scale down to 1-5 stars: 9-10 => 5★, 7-8 => 4★, 5-6 => 3★, 3-4 => 2★, 1-2 => 1★
@@ -342,7 +479,7 @@ export function calculateMovieRatingBreakdown(
       starCounts[star] = (starCounts[star] || 0) + 1;
     });
     const total = movieReviews.length;
-    const sum10 = movieReviews.reduce((acc, r) => acc + (typeof r.rating === 'number' ? r.rating : 8), 0);
+    const sum10 = movieReviews.reduce((acc, r) => acc + (typeof r.rating === 'number' && !isNaN(r.rating) ? r.rating : 8), 0);
     const avg5 = (sum10 / (total * 2)).toFixed(1);
     const avg10 = (sum10 / total).toFixed(1);
 
@@ -359,37 +496,17 @@ export function calculateMovieRatingBreakdown(
     };
   }
 
-  // When no written fan reviews are logged yet, derive authentic distribution
-  // from the movie's TMDb rating and audience vote count
-  const totalVotes = Math.max(12, fallbackMovie?.ratingCount || 24);
-  const avgScore10 = Math.max(1.0, Math.min(10.0, fallbackMovie?.rating || 8.0));
-  const avgScore5 = avgScore10 / 2;
-
-  const w5 = Math.max(0.04, Math.exp(-Math.pow(5 - avgScore5, 2) / 1.5));
-  const w4 = Math.max(0.04, Math.exp(-Math.pow(4 - avgScore5, 2) / 1.5));
-  const w3 = Math.max(0.02, Math.exp(-Math.pow(3 - avgScore5, 2) / 1.5));
-  const w2 = Math.max(0.01, Math.exp(-Math.pow(2 - avgScore5, 2) / 1.5));
-  const w1 = Math.max(0.005, Math.exp(-Math.pow(1 - avgScore5, 2) / 1.5));
-  const sumW = w5 + w4 + w3 + w2 + w1;
-
-  const c5 = Math.round((w5 / sumW) * totalVotes);
-  const c4 = Math.round((w4 / sumW) * totalVotes);
-  const c3 = Math.round((w3 / sumW) * totalVotes);
-  const c2 = Math.round((w2 / sumW) * totalVotes);
-  const c1 = Math.max(0, totalVotes - (c5 + c4 + c3 + c2));
-
+  // When 0 items exist, return clean empty state with 0 counts and 0%
   return {
-    total: totalVotes,
-    average5: avgScore5.toFixed(1),
-    average10: avgScore10.toFixed(1),
-    source: 'Audience & Cultural Consensus',
-    stars: [
-      { star: 5, count: c5, percent: Math.round((c5 / totalVotes) * 100) },
-      { star: 4, count: c4, percent: Math.round((c4 / totalVotes) * 100) },
-      { star: 3, count: c3, percent: Math.round((c3 / totalVotes) * 100) },
-      { star: 2, count: c2, percent: Math.round((c2 / totalVotes) * 100) },
-      { star: 1, count: c1, percent: Math.round((c1 / totalVotes) * 100) }
-    ]
+    total: 0,
+    average5: '0.0',
+    average10: '0.0',
+    source: 'No reviews yet',
+    stars: ([5, 4, 3, 2, 1] as const).map((star) => ({
+      star,
+      count: 0,
+      percent: 0
+    }))
   };
 }
 
@@ -663,25 +780,45 @@ export async function purgeNonNigerianMoviesFromFirestore(
     return { totalScanned: 0, purgedCount: 0, preservedCount: 0, purgedTitles: [] };
   }
   try {
-    const movieCollection = collection(db, 'custom_movies');
-    const snapshot = await getDocs(movieCollection);
-
     const toDelete: Array<{ id: string; title: string }> = [];
     let preservedCount = 0;
+    let totalScanned = 0;
 
-    snapshot.forEach((docSnap) => {
-      if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
-      const data = docSnap.data();
-      const movieCandidate = { ...data, id: docSnap.id };
+    // Complete pagination loop using startAfter(lastVisible) cursor until custom_movies is completely exhausted
+    let lastVisible: QueryDocumentSnapshot<DocumentData> | null = null;
+    let hasMore = true;
 
-      if (!isNigerianMovie(movieCandidate)) {
-        toDelete.push({ id: docSnap.id, title: String(data.title || docSnap.id) });
-      } else {
-        preservedCount++;
+    while (hasMore) {
+      const q: Query<DocumentData> = lastVisible
+        ? query(collection(db, 'custom_movies'), orderBy('__name__'), startAfter(lastVisible), limit(350))
+        : query(collection(db, 'custom_movies'), orderBy('__name__'), limit(350));
+
+      const snapshot: QuerySnapshot<DocumentData> = await getDocs(q);
+      if (snapshot.empty) {
+        hasMore = false;
+        break;
       }
-    });
 
-    const totalScanned = snapshot.size;
+      snapshot.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+        totalScanned++;
+        if (docSnap.id === CATALOG_MIGRATION_DOC_ID) return;
+        const data = docSnap.data();
+        const movieCandidate = { ...data, id: docSnap.id };
+
+        const validation = validateMovieAssetsAndRegion(movieCandidate);
+        if (!validation.isValid) {
+          toDelete.push({ id: docSnap.id, title: String(data.title || docSnap.id) });
+        } else {
+          preservedCount++;
+        }
+      });
+
+      lastVisible = snapshot.docs[snapshot.docs.length - 1];
+      if (snapshot.size < 350) {
+        hasMore = false;
+      }
+    }
+
     let purgedCount = 0;
     const purgedTitles: string[] = [];
 
@@ -699,7 +836,7 @@ export async function purgeNonNigerianMoviesFromFirestore(
       onProgress?.({ scanned: totalScanned, purged: purgedCount });
     }
 
-    console.info(`[Purge] Scanned ${totalScanned} movies: purged ${purgedCount} non-Nigerian movies, preserved ${preservedCount}.`);
+    console.info(`[Purge] Scanned ${totalScanned} movies: purged ${purgedCount} non-Nigerian/mismatched movies, preserved ${preservedCount}.`);
     return {
       totalScanned,
       purgedCount,
@@ -746,38 +883,59 @@ export async function initializeFirestoreMovieCatalog(
     // Automatically purge non-Nigerian movies if needed
     const purgeResult = await purgeNonNigerianMoviesFromFirestore();
 
-    const movieCollection = collection(db, 'custom_movies');
-    const snapshot = await getDocs(movieCollection);
     const existingIds = new Set<string>();
     const writes: Array<{ ref: any; payload: Record<string, any> }> = [];
     let migratedCount = 0;
     let seededCount = 0;
 
-    snapshot.forEach((movieSnapshot) => {
-      if (movieSnapshot.id === CATALOG_MIGRATION_DOC_ID) return;
-      const data = movieSnapshot.data();
-      const movieCandidate = { ...data, id: movieSnapshot.id };
-      if (!isNigerianMovie(movieCandidate)) return;
+    // Complete pagination loop using startAfter(lastVisible) cursor until custom_movies is completely exhausted
+    let lastVisible: QueryDocumentSnapshot<DocumentData> | null = null;
+    let hasMore = true;
 
-      existingIds.add(movieSnapshot.id);
+    while (hasMore) {
+      const q: Query<DocumentData> = lastVisible
+        ? query(collection(db, 'custom_movies'), orderBy('__name__'), startAfter(lastVisible), limit(350))
+        : query(collection(db, 'custom_movies'), orderBy('__name__'), limit(350));
 
-      const hasDefaultTag = Array.isArray(data.collections) &&
-        data.collections.some((tag: unknown) => typeof tag === 'string' && tag.trim() === DEFAULT_MOVIE_COLLECTION);
-      if (!hasDefaultTag) {
-        writes.push({
-          ref: doc(db, 'custom_movies', movieSnapshot.id),
-          payload: sanitizeAndTagMovie({ ...data, id: movieSnapshot.id })
-        });
-        migratedCount++;
+      const snapshot: QuerySnapshot<DocumentData> = await getDocs(q);
+      if (snapshot.empty) {
+        hasMore = false;
+        break;
       }
-    });
+
+      snapshot.forEach((movieSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+        if (movieSnapshot.id === CATALOG_MIGRATION_DOC_ID) return;
+        const data = movieSnapshot.data();
+        const movieCandidate = { ...data, id: movieSnapshot.id };
+        const val = validateMovieAssetsAndRegion(movieCandidate);
+        if (!val.isValid) return;
+
+        existingIds.add(movieSnapshot.id);
+
+        const hasDefaultTag = Array.isArray(data.collections) &&
+          data.collections.some((tag: unknown) => typeof tag === 'string' && tag.trim() === DEFAULT_MOVIE_COLLECTION);
+        if (!hasDefaultTag) {
+          writes.push({
+            ref: doc(db, 'custom_movies', movieSnapshot.id),
+            payload: prepareMovieForFirestore({ ...data, id: movieSnapshot.id })
+          });
+          migratedCount++;
+        }
+      });
+
+      lastVisible = snapshot.docs[snapshot.docs.length - 1];
+      if (snapshot.size < 350) {
+        hasMore = false;
+      }
+    }
 
     for (const seedMovie of seedMovies) {
       if (existingIds.has(seedMovie.id)) continue;
-      if (!isNigerianMovie(seedMovie)) continue;
+      const val = validateMovieAssetsAndRegion(seedMovie);
+      if (!val.isValid) continue;
       writes.push({
         ref: doc(db, 'custom_movies', seedMovie.id),
-        payload: sanitizeAndTagMovie({
+        payload: prepareMovieForFirestore({
           ...seedMovie,
           isUserAdded: Boolean(seedMovie.isUserAdded),
           source: seedMovie.source || 'system'
@@ -819,11 +977,102 @@ export async function initializeFirestoreMovieCatalog(
 }
 
 /**
+ * Exhaustively fetches all custom_movies from Firestore using startAfter(lastVisible) cursor pagination
+ * until the source collection is completely exhausted, without hardcoded loop breaks, array length caps, or arbitrary limits.
+ */
+export async function fetchAllCustomMoviesPaginated(
+  onPageFetched?: (movies: Movie[], pageNumber: number) => void
+): Promise<Movie[]> {
+  const allMovies: Movie[] = [];
+  let lastVisible: QueryDocumentSnapshot<DocumentData> | null = null;
+  let hasMore = true;
+  let pageNumber = 1;
+
+  while (hasMore) {
+    const q: Query<DocumentData> = lastVisible
+      ? query(collection(db, 'custom_movies'), orderBy('__name__'), startAfter(lastVisible), limit(350))
+      : query(collection(db, 'custom_movies'), orderBy('__name__'), limit(350));
+
+    const snap: QuerySnapshot<DocumentData> = await getDocs(q);
+    if (snap.empty) {
+      hasMore = false;
+      break;
+    }
+
+    const pageMovies: Movie[] = [];
+    snap.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+      if (
+        docSnap.id === CATALOG_MIGRATION_DOC_ID ||
+        docSnap.id.startsWith('naijareel-migration') ||
+        docSnap.id.startsWith('_')
+      ) {
+        return;
+      }
+      const d = docSnap.data() as any;
+      const movie = sanitizeAndTagMovie(sanitizeMovie({ ...d, id: docSnap.id })) as Movie;
+      pageMovies.push(movie);
+      allMovies.push(movie);
+    });
+
+    onPageFetched?.(pageMovies, pageNumber);
+    pageNumber++;
+
+    lastVisible = snap.docs[snap.docs.length - 1];
+    if (snap.size < 350) {
+      hasMore = false;
+    }
+  }
+
+  return allMovies;
+}
+
+/**
+ * Complete pagination loop (using page++) that continues fetching and pushing pages from an
+ * external or upstream movie source until the source database is completely exhausted.
+ * Automatically saves verified records in real-time Firestore batches.
+ */
+export async function syncMoviesFromSourceToFirestore(
+  fetchSourcePage: (page: number) => Promise<{ movies: Movie[]; totalPages: number }>,
+  userId?: string,
+  onProgress?: (totalSynced: number, currentPage: number, totalPages: number) => void,
+  signal?: AbortSignal
+): Promise<number> {
+  let page = 1;
+  let totalPages = 1;
+  let totalSynced = 0;
+
+  while (page <= totalPages) {
+    if (signal?.aborted) throw new DOMException('Sync aborted', 'AbortError');
+
+    const result = await fetchSourcePage(page);
+    if (typeof result.totalPages === 'number' && result.totalPages > 0) {
+      totalPages = result.totalPages;
+    }
+
+    if (result.movies && result.movies.length > 0) {
+      const savedCount = await saveMultipleFirestoreMovies(result.movies, userId, signal);
+      totalSynced += savedCount;
+    }
+
+    onProgress?.(totalSynced, page, totalPages);
+
+    if (!result.movies || result.movies.length === 0) {
+      break;
+    }
+
+    page++;
+  }
+
+  return totalSynced;
+}
+
+/**
  * Save new or modified movie directly to Firebase Firestore
  */
 export async function saveFirestoreCustomMovie(movie: Movie, userId?: string): Promise<Movie> {
-  if (!isNigerianMovie(movie)) {
-    throw new Error(`Movie "${movie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  const validation = validateMovieAssetsAndRegion(movie);
+  if (!validation.isValid) {
+    throw new Error(`Movie "${movie.title}" rejected: ${validation.reason}`);
   }
 
   const currentUid = userId || auth.currentUser?.uid;
@@ -860,8 +1109,15 @@ export async function saveMultipleFirestoreMovies(
   signal?: AbortSignal
 ): Promise<number> {
   if (!movies || movies.length === 0) return 0;
-  // Strictly filter out any movie that does not meet Nigerian criteria
-  const validMovies = movies.filter(isNigerianMovie);
+  // Strictly filter out any movie that fails regional origin or asset cross-referencing validation
+  const validMovies = movies.filter((m) => {
+    const val = validateMovieAssetsAndRegion(m);
+    if (!val.isValid) {
+      console.warn(`[Strict Validation] Skipped movie "${m?.title || m?.id}": ${val.reason}`);
+      return false;
+    }
+    return true;
+  });
   if (validMovies.length === 0) return 0;
 
   const currentUid = userId || auth.currentUser?.uid;
@@ -915,8 +1171,9 @@ export async function saveMultipleFirestoreMovies(
  * Update an existing movie directly in Firebase Firestore with user identity & timestamp
  */
 export async function updateFirestoreMovie(movie: Movie, userId?: string): Promise<Movie> {
-  if (!isNigerianMovie(movie)) {
-    throw new Error(`Movie "${movie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  const validation = validateMovieAssetsAndRegion(movie);
+  if (!validation.isValid) {
+    throw new Error(`Movie "${movie.title}" rejected: ${validation.reason}`);
   }
 
   const currentUid = userId || auth.currentUser?.uid || 'community-editor';

@@ -1,8 +1,10 @@
-import type { UserReview } from '../types.ts';
+import type { Movie, UserReview } from '../types.ts';
 
 /**
  * Initial reviews catalogue.
- * Empty by default — all reviews are user-submitted and queried dynamically from Firestore.
- * Hardcoded sample reviews (e.g. Babatunde Alao, 2023) have been removed.
+ * Empty by default — all reviews and ratings are calculated dynamically solely from live Firestore.
+ * Hardcoded default rating counts, distribution percentages, and seed objects have been removed.
  */
+export const mockMovies: Movie[] = [];
+export const mockReviews: UserReview[] = [];
 export const INITIAL_REVIEWS: UserReview[] = [];

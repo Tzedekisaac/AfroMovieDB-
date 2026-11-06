@@ -38,6 +38,7 @@ import { Navbar } from './components/Navbar';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { CatalogueFilters } from './components/CatalogueFilters';
 import { MovieCard } from './components/MovieCard';
+import { MovieGrid } from './components/MovieGrid';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { EditMovieModal } from './components/EditMovieModal';
 import { TrailerModal } from './components/TrailerModal';
@@ -655,7 +656,7 @@ export default function App() {
         (progress) => {
           setSweepProgress(progress);
         },
-        20,
+        undefined,
         controller.signal
       );
 
@@ -1274,51 +1275,20 @@ export default function App() {
               </div>
             ) : (
               <>
-                {viewMode === 'grid' ? (
-                  <div 
-                    id="movies-grid"
-                    className="w-full max-w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6 lg:gap-7"
-                  >
-                    {displayedMovies.map((movie) => (
-                      <MovieCard
-                        key={movie.id}
-                        movie={movie}
-                        onSelect={setSelectedMovie}
-                        onOpenTrailer={setTrailerMovie}
-                        isWatchlisted={watchlistIds.includes(movie.id)}
-                        onToggleWatchlist={handleToggleWatchlist}
-                        watchStatus={trackingMap.get(movie.id)?.status || (watchlistIds.includes(movie.id) ? 'plan_to_watch' : null)}
-                        onUpdateStatus={handleUpdateTrackingStatus}
-                        viewMode="grid"
-                        currentUser={currentUser}
-                        onOpenEdit={(m) => setEditingMovie(m)}
-                        onOpenAuth={() => setIsAuthOpen(true)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div 
-                    id="movies-list"
-                    className="w-full max-w-full space-y-3"
-                  >
-                    {displayedMovies.map((movie) => (
-                      <MovieCard
-                        key={movie.id}
-                        movie={movie}
-                        onSelect={setSelectedMovie}
-                        onOpenTrailer={setTrailerMovie}
-                        isWatchlisted={watchlistIds.includes(movie.id)}
-                        onToggleWatchlist={handleToggleWatchlist}
-                        watchStatus={trackingMap.get(movie.id)?.status || (watchlistIds.includes(movie.id) ? 'plan_to_watch' : null)}
-                        onUpdateStatus={handleUpdateTrackingStatus}
-                        viewMode="compact"
-                        currentUser={currentUser}
-                        onOpenEdit={(m) => setEditingMovie(m)}
-                        onOpenAuth={() => setIsAuthOpen(true)}
-                      />
-                    ))}
-                  </div>
-                )}
+                <MovieGrid
+                  movies={displayedMovies}
+                  onSelectMovie={setSelectedMovie}
+                  onOpenTrailer={setTrailerMovie}
+                  watchlistIds={watchlistIds}
+                  onToggleWatchlist={handleToggleWatchlist}
+                  trackingMap={trackingMap}
+                  onUpdateStatus={handleUpdateTrackingStatus}
+                  viewMode={viewMode}
+                  currentUser={currentUser}
+                  onOpenEdit={(m) => setEditingMovie(m)}
+                  onOpenAuth={() => setIsAuthOpen(true)}
+                  reviews={reviews}
+                />
 
                 {/* Clean Load More Button (Fixed Batches of 12) */}
                 {displayedMoviesCount < filteredMovies.length && (
