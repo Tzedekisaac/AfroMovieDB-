@@ -11,6 +11,7 @@ import { PersonProfileModal } from './PersonProfileModal';
 import { pullMovieDetailsFromOnline, WebMovieCandidate } from '../utils/api';
 import { TrackingStatusPicker } from './TrackingStatusPicker';
 import { ReviewSection } from './ReviewSection';
+import { calculateMovieRatingBreakdown, subscribeToMovieReviews } from '../lib/firestoreService';
 
 interface MovieDetailModalProps {
   movie: Movie | null;
@@ -113,6 +114,36 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   const [backdropError, setBackdropError] = useState(false);
   const [posterError, setPosterError] = useState(false);
+
+  const [internalReviews, setInternalReviews] = useState<UserReview[]>(() => {
+    if (reviews !== undefined && movie?.id) {
+      return reviews.filter(r => r.movieId === movie.id);
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    if (!movie?.id) {
+      setInternalReviews([]);
+      return;
+    }
+    if (reviews !== undefined) {
+      setInternalReviews(reviews.filter(r => r.movieId === movie.id));
+      return;
+    }
+    const unsub = subscribeToMovieReviews(movie.id, (loadedReviews) => {
+      setInternalReviews(loadedReviews || []);
+    });
+    return () => unsub();
+  }, [movie?.id, reviews]);
+
+  const activeReviews = reviews !== undefined && movie?.id
+    ? reviews.filter(r => r.movieId === movie.id)
+    : internalReviews;
+
+  const ratingMetrics = useMemo(() => {
+    return calculateMovieRatingBreakdown(activeReviews);
+  }, [activeReviews]);
 
   useEffect(() => {
     setBackdropError(false);
@@ -366,10 +397,23 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 <span className="px-2 py-0.5 text-xs font-medium rounded bg-slate-900/90 text-slate-200 border border-slate-700">
                   {movie.era}
                 </span>
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-amber-400 text-xs font-bold">
-                  <Star className="w-3.5 h-3.5 fill-amber-400" />
-                  <span>{movie.rating.toFixed(1)}/10</span>
-                </div>
+                {ratingMetrics.total > 0 ? (
+                  <div 
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-amber-400 text-xs font-bold"
+                    title={`Based on ${ratingMetrics.total} user review${ratingMetrics.total === 1 ? '' : 's'}`}
+                  >
+                    <Star className="w-3.5 h-3.5 fill-amber-400" />
+                    <span>{ratingMetrics.average10}/10</span>
+                  </div>
+                ) : (
+                  <div 
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900/60 border border-slate-800 text-slate-400 text-xs font-medium"
+                    title="No community reviews yet"
+                  >
+                    <Star className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Unrated</span>
+                  </div>
+                )}
               </div>
 
               <h2 className="font-cinema text-2xl sm:text-4xl font-extrabold text-white tracking-tight drop-shadow-md">

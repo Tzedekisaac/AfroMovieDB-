@@ -19,8 +19,13 @@ import {
   subscribeToCustomMovies, 
   saveFirestoreCustomMovie, 
   saveMultipleFirestoreMovies,
-  updateFirestoreMovie 
+  updateFirestoreMovie,
+  purgeNonNigerianMoviesFromFirestore,
+  syncUserProfileOnLogin,
+  subscribeToUserProfile,
+  isUserOwner
 } from './lib/firestoreService';
+import { isNigerianMovie } from './utils/nigerianMovieValidator';
 import { 
   bulkSyncNigerianNewReleases, 
   checkAndRunDailySync,
@@ -30,7 +35,7 @@ import {
   HistoricalSweepProgress,
   sanitizeMovie
 } from './utils/api';
-import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
+import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList, AppUserProfile, UserRole } from './types';
 import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
 import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
 import { sanitizeAndAlignMovieMetadata } from './utils/validation';
@@ -50,6 +55,8 @@ import { UserProfilePage } from './components/UserProfilePage';
 import { StandaloneListView } from './components/StandaloneListView';
 import { CustomListModal } from './components/CustomListModal';
 import { HistoricalSweepPill } from './components/HistoricalSweepPill';
+import { AdminRoute } from './components/AdminRoute';
+import { AdminDashboard } from './components/AdminDashboard';
 import { Footer } from './components/Footer';
 import { SiteInfoModal, type SiteInfoPage } from './components/SiteInfoModal';
 import { 
@@ -62,11 +69,12 @@ const TRACKING_STORAGE_KEY = 'afromoviedb_tracking_list_v1';
 const REVIEWS_STORAGE_KEY = 'afromoviedb_user_reviews_v1';
 
 export default function App() {
-  // Navigation View State: 'catalogue' or dedicated 'profile'
-  const [currentView, setCurrentView] = useState<'catalogue' | 'profile'>('catalogue');
+  // Navigation View State: 'catalogue', 'profile', or 'admin' command center
+  const [currentView, setCurrentView] = useState<'catalogue' | 'profile' | 'admin'>('catalogue');
 
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<AppUserProfile | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
@@ -194,13 +202,38 @@ export default function App() {
   // Quick collections shortcut selection
   const [activeCollection, setActiveCollection] = useState<string>('all');
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state & sync profile / role
   useEffect(() => {
+    let profileUnsub: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
       setIsAuthReady(true);
+
+      if (profileUnsub) {
+        profileUnsub();
+        profileUnsub = null;
+      }
+
+      if (user) {
+        // Sync profile into Firestore users collection
+        syncUserProfileOnLogin(user).catch((err) => {
+          console.warn('Profile sync on auth notice:', err);
+        });
+
+        // Listen for live role and profile changes
+        profileUnsub = subscribeToUserProfile(user.uid, (profile) => {
+          setCurrentUserProfile(profile);
+        });
+      } else {
+        setCurrentUserProfile(null);
+      }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribe();
+      if (profileUnsub) profileUnsub();
+    };
   }, []);
 
   // Listen to Firestore real-time User Data (trackingList, watchlist, custom TMDb API key, theme)
@@ -247,6 +280,11 @@ export default function App() {
       setUserCustomLists(lists);
     });
 
+    // Run auto-cleanup pass on Cloud Firestore in the background
+    purgeNonNigerianMoviesFromFirestore().catch((err) => {
+      console.info('Auto-cleanup pass notice:', err?.message || err);
+    });
+
     return () => unsubscribe();
   }, [currentUser]);
 
@@ -274,10 +312,17 @@ export default function App() {
     }, 15000);
 
     const unsubscribe = subscribeToCustomMovies((cloudMovies, fromCache) => {
-      // Direct rendering of all Firestore documents with safe fallbacks and aligned visual assets
-      const sanitizedCloud = (cloudMovies || []).map((movie) => 
-        sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie)
-      );
+      // Direct rendering of verified Nigerian Firestore documents with safe fallbacks and aligned visual assets
+      const sanitizedCloud = (cloudMovies || [])
+        .filter((movie) => {
+          const normTitle = String(movie?.title || '').toLowerCase().trim();
+          const normDirector = String(movie?.director || '').toLowerCase().trim();
+          if (normTitle.includes('call me') || normDirector.includes('arek zasowski')) return false;
+          return isNigerianMovie(movie);
+        })
+        .map((movie) => 
+          sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie)
+        );
       setMoviesList(sanitizedCloud);
       if (sanitizedCloud.length > 0 || !fromCache) {
         window.clearTimeout(snapshotTimeout);
@@ -1073,9 +1118,15 @@ export default function App() {
         onOpenAutoPull={() => setIsAutoPullOpen(true)}
         totalMoviesCount={moviesList.length}
         currentUser={currentUser}
+        userRole={currentUserProfile?.role}
         onOpenAuth={() => setIsAuthOpen(true)}
         currentView={currentView}
-        onNavigateView={setCurrentView}
+        onNavigateView={(view) => {
+          setCurrentView(view);
+          if (view === 'catalogue') {
+            setActiveStandaloneList(null);
+          }
+        }}
         activeTheme={activeTheme}
       />
 
@@ -1152,6 +1203,20 @@ export default function App() {
           onBackToCatalogue={() => setCurrentView('catalogue')}
           onOpenEdit={(movie) => setEditingMovie(movie)}
         />
+      ) : currentView === 'admin' ? (
+        <AdminRoute
+          currentUser={currentUser}
+          onNavigateHome={() => setCurrentView('catalogue')}
+          onOpenAuth={() => setIsAuthOpen(true)}
+          allowedRoles={['owner', 'admin', 'moderator']}
+        >
+          <AdminDashboard
+            currentUser={currentUser}
+            onNavigateHome={() => setCurrentView('catalogue')}
+            moviesList={moviesList}
+            activeTheme={activeTheme}
+          />
+        </AdminRoute>
       ) : (
         <>
           {/* Hero Spotlight (Hidden if user is actively searching or filtering by watchlist) */}

@@ -1,7 +1,8 @@
 import React from 'react';
-import { Film, Bookmark, Sparkles, Search, X, Award, Flame, Plus, User as UserIcon, LogIn } from 'lucide-react';
-import { FilterState, AppTheme } from '../types';
+import { Film, Bookmark, Sparkles, Search, X, Award, Flame, Plus, User as UserIcon, LogIn, Shield } from 'lucide-react';
+import { FilterState, AppTheme, UserRole } from '../types';
 import { User } from 'firebase/auth';
+import { isUserOwner } from '../lib/firestoreService';
 
 interface NavbarProps {
   filterState: FilterState;
@@ -12,9 +13,10 @@ interface NavbarProps {
   onOpenAutoPull: () => void;
   totalMoviesCount: number;
   currentUser: User | null;
+  userRole?: UserRole;
   onOpenAuth: () => void;
-  currentView?: 'catalogue' | 'profile';
-  onNavigateView?: (view: 'catalogue' | 'profile') => void;
+  currentView?: 'catalogue' | 'profile' | 'admin';
+  onNavigateView?: (view: 'catalogue' | 'profile' | 'admin') => void;
   activeTheme?: AppTheme;
 }
 
@@ -27,6 +29,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAutoPull,
   totalMoviesCount,
   currentUser,
+  userRole,
   onOpenAuth,
   currentView = 'catalogue',
   onNavigateView,
@@ -205,6 +208,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               )}
             </button>
+
+            {/* Admin Command Center Shortcut Button */}
+            {currentUser && (
+              <button
+                id="open-admin-dashboard-btn"
+                onClick={() => {
+                  if (onNavigateView) {
+                    onNavigateView(currentView === 'admin' ? 'catalogue' : 'admin');
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs sm:px-3 sm:text-xs font-bold rounded-full border transition-all cursor-pointer shadow-sm ${
+                  currentView === 'admin'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-400 shadow-md shadow-purple-950/40'
+                    : isUserOwner(currentUser) || userRole === 'admin' || userRole === 'owner' || userRole === 'moderator'
+                      ? 'bg-purple-950/40 hover:bg-purple-900/60 border-purple-500/40 text-purple-300 hover:text-white'
+                      : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+                title={currentView === 'admin' ? "Return to Catalogue" : "Admin Command Center"}
+              >
+                <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <span className="hidden sm:inline">{currentView === 'admin' ? 'Catalogue' : 'Admin'}</span>
+              </button>
+            )}
 
             {/* Unified User Profile & Account Authentication Button */}
             <button

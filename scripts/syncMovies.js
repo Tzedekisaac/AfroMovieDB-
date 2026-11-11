@@ -31,7 +31,9 @@ import {
   GENRE_MAP,
   FALLBACK_POSTER,
   FALLBACK_BACKDROP,
-  KNOWN_FOREIGN_TITLES_LOWER 
+  KNOWN_FOREIGN_TITLES_LOWER,
+  KNOWN_FOREIGN_CREW_LOWER,
+  hasRecognizedNollywoodIndicators
 } from '../src/utils/nigerianMovieValidator.ts';
 
 // Ensure admin and admin.credential are fully populated in ES module environments
@@ -386,6 +388,22 @@ export async function runMovieSync() {
       const validation = validateNigerianMovie(details, { isDetailEnriched: true });
       if (!validation.isValid) {
         console.info(`[Validation] Skipped "${details.title || cand.title}": ${validation.reason}`);
+        rejectedCount++;
+        continue;
+      }
+
+      // Enforce strict regional filtering: Reject any candidate film that isn't produced in Nigeria (must include 'NG')
+      const originCountries = extractOriginCountries(details);
+      if (!originCountries.includes('NG')) {
+        console.info(`[Validation] Skipped "${details.title || cand.title}": Not produced in Nigeria (missing authoritative NG origin tag)`);
+        rejectedCount++;
+        continue;
+      }
+
+      // Enforce Nollywood cast/crew/cultural keywords: Reject any candidate film that doesn't explicitly feature recognized Nollywood cast/crew keywords
+      const hasNollywood = hasRecognizedNollywoodIndicators(details);
+      if (!hasNollywood) {
+        console.info(`[Validation] Skipped "${details.title || cand.title}": Lacks recognized Nollywood cast/crew keywords or authentic Nigerian provenance`);
         rejectedCount++;
         continue;
       }

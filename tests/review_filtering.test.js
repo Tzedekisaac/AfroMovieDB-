@@ -59,18 +59,18 @@ test('1. calculateMovieRatingBreakdown computes accurate 5-star to 1-star distri
   assert.strictEqual(star3?.percent, 33);
 });
 
-test('2. calculateMovieRatingBreakdown derives authentic consensus when no written reviews exist', () => {
+test('2. calculateMovieRatingBreakdown returns clean zero rating state without fallback ratings when no reviews exist', () => {
   const emptyReviews = [];
-  const breakdown = calculateMovieRatingBreakdown(emptyReviews, { rating: 9.0, ratingCount: 50 });
+  const breakdown = calculateMovieRatingBreakdown(emptyReviews);
 
-  assert.strictEqual(breakdown.total, 50);
-  assert.strictEqual(breakdown.average10, '9.0');
-  assert.strictEqual(breakdown.average5, '4.5');
-  assert.strictEqual(breakdown.source, 'Audience & Cultural Consensus');
+  assert.strictEqual(breakdown.total, 0);
+  assert.strictEqual(breakdown.average10, '0.0');
+  assert.strictEqual(breakdown.average5, '0.0');
+  assert.strictEqual(breakdown.source, 'No reviews yet');
   assert.strictEqual(breakdown.stars.length, 5);
 
   const totalSum = breakdown.stars.reduce((acc, s) => acc + s.count, 0);
-  assert.strictEqual(totalSum, 50);
+  assert.strictEqual(totalSum, 0);
 });
 
 test('3. Dynamic review filtering strictly filters by movieId == currentMovieId and prevents ghost reviews', () => {

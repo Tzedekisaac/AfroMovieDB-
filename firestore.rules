@@ -11,6 +11,31 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isSystemOwner() {
+      return isAuthenticated() && (
+        request.auth.uid == 'naijareel-owner-primary' ||
+        request.auth.token.email == 'justiceisaac06@gmail.com'
+      );
+    }
+
+    function isAdmin() {
+      return isSystemOwner() || (
+        isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    function isModeratorOrHigher() {
+      return isAdmin() || (
+        isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'moderator'
+      );
+    }
+
     function hasValidMovieFields() {
       return request.resource.data.title is string
         && request.resource.data.title.size() > 0
@@ -18,9 +43,16 @@ service cloud.firestore {
         && request.resource.data.id.size() > 0;
     }
 
-    // 1. User profile, private tracking list, and personal API keys
+    // 1. User profile and private tracking list
+    // Standard users can manage their own data, but cannot escalate their own role or isAdmin flag
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isOwner(userId) && (!request.resource.data.keys().hasAny(['role', 'isAdmin']) || isSystemOwner());
+      allow update: if isAuthenticated() && (
+        (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin'])) ||
+        isAdmin()
+      );
+      allow delete: if isSystemOwner();
     }
 
     // 2. Public community reviews for Nollywood films
@@ -32,25 +64,21 @@ service cloud.firestore {
         && request.resource.data.rating >= 1
         && request.resource.data.rating <= 10;
       allow update, delete: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid || request.auth.token.email != null
+        resource.data.userId == request.auth.uid || isAdmin()
       );
     }
 
-    // 3. Nigerian movie catalogue: Publicly readable; client writes require authenticated user and valid schema.
-    // (Note: Server-side sync via scripts/syncMovies.js uses Firebase Admin SDK which bypasses client rules)
+    // 3. Nigerian movie catalogue: Publicly readable; writes/updates require authorization; deletes require admin/owner
     match /custom_movies/{movieId} {
       allow read: if true;
-      allow create: if isAuthenticated() && hasValidMovieFields();
+      allow create: if isAuthenticated() && hasValidMovieFields() && (
+        isModeratorOrHigher() || request.resource.data.addedByUserId == request.auth.uid
+      );
       allow update: if isAuthenticated() && hasValidMovieFields() && (
-        resource.data.addedByUserId == request.auth.uid ||
-        resource.data.addedByUserId == null ||
-        resource.data.addedByUserId == 'community-contributor' ||
-        resource.data.addedByUserId == 'github-actions-sync' ||
-        resource.data.addedByUserId == 'system-cloud-function'
+        isModeratorOrHigher() || resource.data.addedByUserId == request.auth.uid
       );
       allow delete: if isAuthenticated() && (
-        resource.data.addedByUserId == request.auth.uid ||
-        request.auth.token.email != null
+        isAdmin() || resource.data.addedByUserId == request.auth.uid
       );
 
       // 3b. Reviews subcollection directly inside the movie document
@@ -62,22 +90,22 @@ service cloud.firestore {
           && request.resource.data.rating >= 1
           && request.resource.data.rating <= 10;
         allow update, delete: if isAuthenticated() && (
-          resource.data.userId == request.auth.uid || request.auth.token.email != null
+          resource.data.userId == request.auth.uid || isAdmin()
         );
       }
     }
 
     // 4. Public and user curated themed film collections
     match /custom_lists/{listId} {
-      allow read: if resource.data.isPublic == true || isOwner(resource.data.creatorId);
+      allow read: if resource.data.isPublic == true || isOwner(resource.data.creatorId) || isAdmin();
       allow create: if isAuthenticated() && request.resource.data.creatorId == request.auth.uid;
-      allow update, delete: if isOwner(resource.data.creatorId);
+      allow update, delete: if isOwner(resource.data.creatorId) || isAdmin();
     }
 
-    // 5. System synchronization audit log (Publicly readable, writable only via Firebase Admin SDK)
+    // 5. System synchronization audit log
     match /system_meta/{metaId} {
       allow read: if true;
-      allow write: if false; // Server-side Firebase Admin SDK bypasses client security rules
+      allow write: if isAdmin();
     }
   }
 }

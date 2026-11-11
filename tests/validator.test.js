@@ -133,3 +133,33 @@ test('10. parseSpokenLanguages parses languages with fallback to English', () =>
   assert.deepStrictEqual(parseSpokenLanguages({ original_language: 'ig' }), ['Igbo']);
   assert.deepStrictEqual(parseSpokenLanguages({}), ['English']);
 });
+
+test('11. Non-Nigerian films like "Call Me" and films directed by Arek Zasowski are strictly rejected', () => {
+  const callMeMovie = {
+    id: 'call-me-1574114',
+    title: 'Call Me',
+    director: 'Arek Zasowski',
+    origin_country: ['NG'],
+    leadCast: [{ actor: 'Arek Zasowski' }, { actor: 'Maegan Coker' }, { actor: 'Sumit Sharma' }]
+  };
+  const result = validateNigerianMovie(callMeMovie, { isDetailEnriched: true });
+  assert.strictEqual(result.status, ValidationStatus.REJECTED_NON_NIGERIAN);
+  assert.strictEqual(result.isValid, false);
+  assert.strictEqual(isNigerianMovie(callMeMovie), false);
+});
+
+test('12. Candidate film with foreign production companies lacking authentic Nigerian tags is rejected', () => {
+  const foreignCompMovie = {
+    id: 'foreign-comp-film',
+    title: 'European Adventure',
+    origin_country: ['NG'],
+    production_companies: [
+      { name: 'Polish Film Works', origin_country: 'PL' },
+      { name: 'London Studios', origin_country: 'GB' }
+    ]
+  };
+  const result = validateNigerianMovie(foreignCompMovie, { isDetailEnriched: true });
+  assert.strictEqual(result.status, ValidationStatus.REJECTED_NON_NIGERIAN);
+  assert.strictEqual(result.isValid, false);
+  assert.strictEqual(isNigerianMovie(foreignCompMovie), false);
+});

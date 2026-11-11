@@ -1,11 +1,11 @@
 import { 
   collection, doc, getDoc, setDoc, updateDoc, 
   deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, 
-  Timestamp, getDocs, writeBatch, startAfter, limit, QueryDocumentSnapshot,
-  Query, DocumentData, QuerySnapshot
+  Timestamp, getDocs, writeBatch, startAfter, limit
 } from 'firebase/firestore';
+import type { QueryDocumentSnapshot, Query, DocumentData, QuerySnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase.ts';
-import type { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList } from '../types.ts';
+import type { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList, UserRole, AppUserProfile } from '../types.ts';
 import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections.ts';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie.ts';
 import { 
@@ -13,7 +13,10 @@ import {
   parseSpokenLanguages, 
   extractOriginCountries, 
   NIGERIAN_ORIGIN_COUNTRY, 
-  KNOWN_FOREIGN_TITLES_LOWER 
+  KNOWN_FOREIGN_TITLES_LOWER,
+  KNOWN_FOREIGN_CREW_LOWER,
+  NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS,
+  hasRecognizedNollywoodIndicators
 } from '../utils/nigerianMovieValidator.ts';
 import { sanitizeMovie } from '../utils/api.ts';
 
@@ -188,19 +191,43 @@ export function validateMovieAssetsAndRegion(
   // 2. Official Regional Origin Cross-Referencing
   // Check against known foreign titles blacklist
   const isKnownForeign = KNOWN_FOREIGN_TITLES_LOWER.some((foreign) =>
-    normalizedTitle === foreign || (foreign.length > 5 && normalizedTitle.startsWith(foreign + ':'))
+    normalizedTitle === foreign || (foreign.length > 5 && normalizedTitle.startsWith(foreign + ':')) || normalizedTitle.includes(foreign)
   );
   if (isKnownForeign) {
     violations.push(`Title "${title}" matches a known foreign / non-Nigerian production`);
   }
 
-  // Cross-reference origin countries against official Nigerian origin ('NG')
+  // Check director against known foreign crew blacklist (e.g. Arek Zasowski)
+  const normalizedDirector = String(movie.director || '').toLowerCase().trim();
+  if (normalizedDirector && KNOWN_FOREIGN_CREW_LOWER.some((fc) => normalizedDirector.includes(fc))) {
+    violations.push(`Director "${movie.director}" matches known foreign filmmaker`);
+  }
+
+  // Cross-reference origin countries: MUST explicitly include official Nigerian origin ('NG')
   const originCountries = extractOriginCountries({
     origin_country: movie.originCountry,
-    production_countries: movie.production_countries || movie.productionCountries
+    originCountry: movie.originCountry,
+    production_countries: movie.production_countries || movie.productionCountries,
+    productionCompanies: movie.production_companies || movie.productionCompanies
   });
-  if (originCountries.length > 0 && !originCountries.includes(NIGERIAN_ORIGIN_COUNTRY)) {
-    violations.push(`Regional origin mismatch: foreign production countries (${originCountries.join(', ')}) without Nigerian origin`);
+  if (!originCountries.includes(NIGERIAN_ORIGIN_COUNTRY)) {
+    violations.push(`Regional origin mismatch: origin_country does not explicitly include 'NG' (${originCountries.join(', ') || 'none'})`);
+  }
+
+  // Check production companies: if present and all foreign without NG, must have authentic Nollywood company tags
+  const compSources = [movie.production_companies, movie.productionCompanies].filter(Boolean);
+  for (const comps of compSources) {
+    if (Array.isArray(comps) && comps.length > 0) {
+      const compCountries = comps.map((c: any) => String(c?.origin_country || '').toUpperCase()).filter(Boolean);
+      if (compCountries.length > 0 && !compCountries.includes(NIGERIAN_ORIGIN_COUNTRY)) {
+        const hasNollywoodComp = comps.some((c: any) =>
+          NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS.some(kw => String(c?.name || '').toLowerCase().includes(kw))
+        );
+        if (!hasNollywoodComp) {
+          violations.push(`Production companies (${compCountries.join(', ')}) lack authentic Nigerian tags`);
+        }
+      }
+    }
   }
 
   // Verify overall Nigerian criteria using authoritative validator
@@ -448,6 +475,221 @@ export async function removeUserApiKey(userId: string) {
     throw err;
   }
 }
+
+// ==========================================
+// ADMIN & RBAC AUTHORIZATION CONFIGURATION
+// ==========================================
+export const PRIMARY_OWNER_UID = 'naijareel-owner-primary';
+export const PRIMARY_OWNER_EMAIL = 'justiceisaac06@gmail.com';
+
+/**
+ * Checks if the given user matches the primary owner credentials.
+ */
+export function isUserOwner(user?: { uid?: string | null; email?: string | null } | null): boolean {
+  if (!user) return false;
+  if (user.uid === PRIMARY_OWNER_UID) return true;
+  if (user.email && user.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()) return true;
+  return false;
+}
+
+/**
+ * Checks if the user is an administrator or system owner.
+ */
+export function isUserAdminOrOwner(
+  profile?: AppUserProfile | null, 
+  user?: { uid?: string | null; email?: string | null } | null
+): boolean {
+  if (isUserOwner(user)) return true;
+  if (!profile) return false;
+  return profile.role === 'owner' || profile.role === 'admin' || profile.isAdmin === true;
+}
+
+/**
+ * Checks if the user has moderator privileges or higher (moderator, admin, owner).
+ */
+export function isUserModeratorOrHigher(
+  profile?: AppUserProfile | null, 
+  user?: { uid?: string | null; email?: string | null } | null
+): boolean {
+  if (isUserAdminOrOwner(profile, user)) return true;
+  if (!profile) return false;
+  return profile.role === 'moderator';
+}
+
+/**
+ * Automatically synchronizes user profile metadata into the Firestore `users` collection upon login.
+ * Auto-assigns owner permissions if credentials match PRIMARY_OWNER_UID or PRIMARY_OWNER_EMAIL.
+ */
+export async function syncUserProfileOnLogin(user: {
+  uid: string;
+  email?: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
+}): Promise<AppUserProfile> {
+  const userDocRef = doc(db, 'users', user.uid);
+  const isOwner = isUserOwner(user);
+
+  try {
+    const snap = await getDoc(userDocRef);
+    if (!snap.exists()) {
+      const initialProfile: AppUserProfile = {
+        uid: user.uid,
+        email: user.email || null,
+        displayName: user.displayName || null,
+        photoURL: user.photoURL || null,
+        role: isOwner ? 'owner' : 'user',
+        isAdmin: isOwner,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+      };
+      await setDoc(userDocRef, stripUndefined(initialProfile), { merge: true });
+      return {
+        ...initialProfile,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      };
+    } else {
+      const data = snap.data();
+      const currentRole: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
+      const isAdmin = isOwner || currentRole === 'admin' || data.isAdmin === true;
+      
+      const updatePayload: Record<string, any> = {
+        lastLoginAt: serverTimestamp(),
+      };
+      if (user.displayName && user.displayName !== data.displayName) updatePayload.displayName = user.displayName;
+      if (user.email && user.email !== data.email) updatePayload.email = user.email;
+      if (user.photoURL && user.photoURL !== data.photoURL) updatePayload.photoURL = user.photoURL;
+      if (isOwner && data.role !== 'owner') {
+        updatePayload.role = 'owner';
+        updatePayload.isAdmin = true;
+      }
+
+      await setDoc(userDocRef, stripUndefined(updatePayload), { merge: true });
+
+      return {
+        uid: user.uid,
+        email: user.email || data.email || null,
+        displayName: user.displayName || data.displayName || null,
+        photoURL: user.photoURL || data.photoURL || null,
+        role: currentRole,
+        isAdmin,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt || new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      };
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    return {
+      uid: user.uid,
+      email: user.email || null,
+      displayName: user.displayName || null,
+      photoURL: user.photoURL || null,
+      role: isOwner ? 'owner' : 'user',
+      isAdmin: isOwner
+    };
+  }
+}
+
+/**
+ * Listens to updates for a single user's profile and RBAC roles.
+ */
+export function subscribeToUserProfile(userId: string, callback: (profile: AppUserProfile | null) => void) {
+  const userDocRef = doc(db, 'users', userId);
+  return onSnapshot(userDocRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      const isOwner = userId === PRIMARY_OWNER_UID || (!!data.email && data.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase());
+      const role: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
+      callback({
+        uid: snap.id,
+        email: data.email || null,
+        displayName: data.displayName || null,
+        photoURL: data.photoURL || null,
+        role,
+        isAdmin: isOwner || role === 'admin' || data.isAdmin === true,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+        lastLoginAt: data.lastLoginAt?.toDate ? data.lastLoginAt.toDate().toISOString() : data.lastLoginAt,
+        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+      });
+    } else {
+      callback(null);
+    }
+  }, (err) => {
+    handleFirestoreError(err, OperationType.GET, `users/${userId}`);
+    callback(null);
+  });
+}
+
+/**
+ * Subscribes to the live Firestore `users` collection for the Admin User Management dashboard.
+ */
+export function subscribeToAllUsers(callback: (users: AppUserProfile[]) => void) {
+  const usersColRef = collection(db, 'users');
+  return onSnapshot(usersColRef, (snapshot) => {
+    const list: AppUserProfile[] = [];
+    let hasOwner = false;
+
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const isOwner = docSnap.id === PRIMARY_OWNER_UID || (!!data.email && data.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase());
+      if (isOwner) hasOwner = true;
+      const role: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
+      list.push({
+        uid: docSnap.id,
+        email: data.email || null,
+        displayName: data.displayName || null,
+        photoURL: data.photoURL || null,
+        role,
+        isAdmin: isOwner || role === 'admin' || data.isAdmin === true,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+        lastLoginAt: data.lastLoginAt?.toDate ? data.lastLoginAt.toDate().toISOString() : data.lastLoginAt,
+        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+      });
+    });
+
+    if (!hasOwner) {
+      list.unshift({
+        uid: PRIMARY_OWNER_UID,
+        email: PRIMARY_OWNER_EMAIL,
+        displayName: 'Justice Isaac (Primary Owner)',
+        photoURL: null,
+        role: 'owner',
+        isAdmin: true,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      });
+    }
+
+    callback(list);
+  }, (err) => {
+    handleFirestoreError(err, OperationType.LIST, 'users');
+    callback([]);
+  });
+}
+
+/**
+ * Updates a user's role in Firestore.
+ * Prevents modifying or demoting the primary owner.
+ */
+export async function updateUserRole(targetUserId: string, newRole: UserRole, targetUserEmail?: string | null) {
+  if (targetUserId === PRIMARY_OWNER_UID || (targetUserEmail && targetUserEmail.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase())) {
+    throw new Error('Permission Denied: Cannot modify or revoke the Primary Owner role.');
+  }
+
+  const userDocRef = doc(db, 'users', targetUserId);
+  try {
+    const payload = stripUndefined({
+      role: newRole,
+      isAdmin: newRole === 'admin' || newRole === 'owner',
+      updatedAt: serverTimestamp()
+    });
+    await setDoc(userDocRef, payload, { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}`);
+    throw err;
+  }
+}
+
 
 export interface MovieRatingBreakdown {
   total: number;
@@ -805,8 +1047,46 @@ export async function purgeNonNigerianMoviesFromFirestore(
         const data = docSnap.data();
         const movieCandidate = { ...data, id: docSnap.id };
 
+        // 1. Strict regional check: origin_country must explicitly include 'NG'
+        const originCountries = extractOriginCountries({
+          origin_country: data.originCountry || data.origin_country,
+          originCountry: data.originCountry || data.origin_country,
+          production_countries: data.production_countries || data.productionCountries,
+          productionCompanies: data.production_companies || data.productionCompanies
+        });
+        const hasExplicitNg = originCountries.includes(NIGERIAN_ORIGIN_COUNTRY);
+
+        // 2. Production companies must not lack authentic Nigerian tags if present
+        let lacksAuthenticNigerianCompany = false;
+        const compSources = [data.production_companies, data.productionCompanies].filter(Boolean);
+        for (const comps of compSources) {
+          if (Array.isArray(comps) && comps.length > 0) {
+            const compOrigins = comps.map((c: any) => String(c?.origin_country || '').toUpperCase()).filter(Boolean);
+            if (compOrigins.length > 0 && !compOrigins.includes(NIGERIAN_ORIGIN_COUNTRY)) {
+              const hasNollywoodComp = comps.some((c: any) =>
+                NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS.some(kw => String(c?.name || '').toLowerCase().includes(kw))
+              );
+              if (!hasNollywoodComp) {
+                lacksAuthenticNigerianCompany = true;
+              }
+            }
+          }
+        }
+
+        // 3. Known foreign title or crew check (e.g. Call Me, Arek Zasowski, Wallace & Gromit)
+        const normTitle = String(data.title || '').toLowerCase().trim();
+        const normDirector = String(data.director || '').toLowerCase().trim();
+        const isKnownForeign =
+          KNOWN_FOREIGN_TITLES_LOWER.some(f => normTitle === f || normTitle.includes(f)) ||
+          KNOWN_FOREIGN_CREW_LOWER.some(fc => normDirector.includes(fc)) ||
+          normTitle.includes('call me') ||
+          normDirector.includes('arek zasowski');
+
         const validation = validateMovieAssetsAndRegion(movieCandidate);
-        if (!validation.isValid) {
+
+        const shouldDelete = !hasExplicitNg || lacksAuthenticNigerianCompany || isKnownForeign || !validation.isValid;
+
+        if (shouldDelete) {
           toDelete.push({ id: docSnap.id, title: String(data.title || docSnap.id) });
         } else {
           preservedCount++;

@@ -34,6 +34,8 @@ export interface ValidationResult {
 
 // Known foreign / non-Nigerian titles that leaked into previous catalog iterations
 export const KNOWN_FOREIGN_TITLES_LOWER = [
+  'call me',
+  'call me (arek zasowski)',
   'wallace & gromit',
   'wallace and gromit',
   '29th street',
@@ -95,6 +97,144 @@ export const KNOWN_FOREIGN_TITLES_LOWER = [
   'outrageous drops',
   'outrageous request'
 ];
+
+// Known foreign directors and crew who must never be accepted as Nollywood filmmakers
+export const KNOWN_FOREIGN_CREW_LOWER = [
+  'arek zasowski',
+  'nick park',
+  'peter lord',
+  'steve box',
+  'richard goleszowski'
+];
+
+// Recognized Nollywood cultural, geographical, and cinema keywords
+export const NOLLYWOOD_CREW_AND_CULTURAL_KEYWORDS = [
+  'nollywood', 'nigeria', 'nigerian', 'lagos', 'abuja', 'enugu', 'yoruba', 'igbo',
+  'hausa', 'naija', 'asaba', 'ebonyi', 'kaduna', 'ibadan', 'calabar', 'benin city',
+  'alaba', 'surulere', 'yaba', 'lekki', 'festac', 'ikeja'
+];
+
+// Recognized authentic Nigerian production companies and distributors
+export const NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS = [
+  'filmone', 'ebonylife', 'inkblot', 'sceneone', 'm-net', 'africa magic',
+  'native filmworks', 'kayode kasum', 'greoh studios', 'kemi adetiba visuals',
+  'anthill', 'mainframe', 'tunde kelani', 'kunle afolayan', 'kap motion',
+  'roknigeria', 'irokotv', 'royal arts academy', 'golden effects', 'nemia media',
+  'silverbird', 'genesis cinemax', 'cinemax', 'blue pictures', 'chinnys',
+  'playnetwork', 'play network', 'nodash', 'filmtrybe'
+];
+
+// Common Nigerian naming patterns, roots, and prefixes across Yoruba, Igbo, Hausa, Edo, and Niger-Delta
+export const NIGERIAN_NAME_PATTERNS = [
+  /ade[a-z]+/i, /olu[a-z]+/i, /baba[a-z]+/i, /ojo/i, /okafor/i, /okeke/i,
+  /okonkwo/i, /chukwu[a-z]*/i, /eze[a-z]*/i, /nw[a-z]+/i, /chi[a-z]+/i,
+  /danladi/i, /musa/i, /ibrahim/i, /bello/i, /garba/i, /shehu/i, /aliyu/i,
+  /afolayan/i, /adetiba/i, /akindele/i, /edochie/i, /mofe[- ]damijo/i,
+  /sobowale/i, /nnaji/i, /nouah/i, /ogoro/i, /ejiro/i, /bandele/i, /effiong/i,
+  /osiberu/i, /kasum/i, /kelani/i, /makun/i, /uranta/i, /ademoye/i, /egbuson/i,
+  /dze/i, /nze/i, /tijani/i, /abraham/i, /chukwuka/i, /ighodaro/i, /ooja/i,
+  /isime/i, /okanlawon/i, /chukwujekwu/i, /michael/i, /etiko/i, /mokeme/i,
+  /erics/i, /shaggi/i, /macaroni/i, /falz/i, /bakre/i, /imo/i, /oshin/i
+];
+
+/**
+ * Checks whether a candidate movie explicitly features recognized Nollywood cast/crew,
+ * authentic Nigerian production companies, or cultural keywords.
+ */
+export function hasRecognizedNollywoodIndicators(movieOrDetails: any): boolean {
+  if (!movieOrDetails || typeof movieOrDetails !== 'object') return false;
+
+  // 1. Direct rejection of foreign blacklist in title or director
+  const rawTitle = String(movieOrDetails.title || movieOrDetails.name || '').toLowerCase().trim();
+  if (KNOWN_FOREIGN_TITLES_LOWER.some(f => rawTitle === f || rawTitle.startsWith(f + ' ') || rawTitle.includes(f))) {
+    return false;
+  }
+
+  const rawDirector = String(movieOrDetails.director || '').toLowerCase().trim();
+  if (rawDirector && KNOWN_FOREIGN_CREW_LOWER.some(fc => rawDirector.includes(fc))) {
+    return false;
+  }
+
+  if (movieOrDetails.credits && Array.isArray(movieOrDetails.credits.crew)) {
+    const credDirector = movieOrDetails.credits.crew.find((c: any) => c && (c.job === 'Director' || c.department === 'Directing'));
+    if (credDirector && credDirector.name && KNOWN_FOREIGN_CREW_LOWER.some(fc => credDirector.name.toLowerCase().includes(fc))) {
+      return false;
+    }
+  }
+
+  // 2. Check indigenous language
+  const lang = String(movieOrDetails.original_language || movieOrDetails.originalLanguage || movieOrDetails.language || '').toLowerCase().trim();
+  if (NIGERIAN_INDIGENOUS_LANGUAGES.includes(lang)) {
+    return true;
+  }
+
+  // 3. Check for Nollywood production companies
+  const compSources = [
+    movieOrDetails.production_companies,
+    movieOrDetails.productionCompanies
+  ].filter(Boolean);
+
+  for (const comps of compSources) {
+    if (Array.isArray(comps)) {
+      for (const comp of comps) {
+        const compName = String(typeof comp === 'string' ? comp : comp?.name || '').toLowerCase();
+        const compOrigin = String(comp?.origin_country || '').toUpperCase();
+        if (compOrigin === 'NG') return true;
+        if (NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS.some(kw => compName.includes(kw))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 4. Check for Nollywood keywords in overview/synopsis, tagline, cultural significance
+  const textBlob = [
+    movieOrDetails.overview,
+    movieOrDetails.synopsis,
+    movieOrDetails.tagline,
+    movieOrDetails.culturalSignificance
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (NOLLYWOOD_CREW_AND_CULTURAL_KEYWORDS.some(kw => textBlob.includes(kw))) {
+    return true;
+  }
+
+  // 5. Check keywords array from TMDb
+  if (movieOrDetails.keywords) {
+    const kwList = Array.isArray(movieOrDetails.keywords) ? movieOrDetails.keywords : movieOrDetails.keywords.keywords;
+    if (Array.isArray(kwList)) {
+      const kwNames = kwList.map((k: any) => String(k?.name || '').toLowerCase()).join(' ');
+      if (NOLLYWOOD_CREW_AND_CULTURAL_KEYWORDS.some(kw => kwNames.includes(kw))) {
+        return true;
+      }
+    }
+  }
+
+  // 6. Check cast & crew for recognized Nigerian names / patterns
+  const peopleNames: string[] = [];
+  if (rawDirector) peopleNames.push(rawDirector);
+  if (Array.isArray(movieOrDetails.leadCast)) {
+    movieOrDetails.leadCast.forEach((c: any) => {
+      if (c && c.actor) peopleNames.push(String(c.actor).toLowerCase());
+    });
+  }
+  if (movieOrDetails.credits && Array.isArray(movieOrDetails.credits.cast)) {
+    movieOrDetails.credits.cast.slice(0, 10).forEach((c: any) => {
+      if (c && c.name) peopleNames.push(String(c.name).toLowerCase());
+    });
+  }
+  if (movieOrDetails.credits && Array.isArray(movieOrDetails.credits.crew)) {
+    movieOrDetails.credits.crew.slice(0, 10).forEach((c: any) => {
+      if (c && c.name) peopleNames.push(String(c.name).toLowerCase());
+    });
+  }
+
+  if (peopleNames.some(name => NIGERIAN_NAME_PATTERNS.some(pat => pat.test(name)))) {
+    return true;
+  }
+
+  return false;
+}
 
 export const GENRE_MAP: Record<number, string> = {
   28: 'Action',
@@ -234,6 +374,18 @@ export function validateNigerianMovie(
     }
   }
 
+  // 1b. Director blacklist check: immediate rejection of known non-Nigerian crew
+  const rawDirector = String(movieOrItem.director || '').toLowerCase().trim();
+  if (rawDirector && KNOWN_FOREIGN_CREW_LOWER.some(fc => rawDirector.includes(fc))) {
+    return {
+      status: ValidationStatus.REJECTED_NON_NIGERIAN,
+      isValid: false,
+      reason: `Director "${movieOrItem.director}" matches known foreign filmmaker`,
+      countries: extractOriginCountries(movieOrItem),
+      originalLanguage: String(movieOrItem.original_language || movieOrItem.originalLanguage || '')
+    };
+  }
+
   const countries = extractOriginCountries(movieOrItem);
   const hasNg = countries.includes(NIGERIAN_ORIGIN_COUNTRY);
   const originalLang = String(
@@ -245,6 +397,27 @@ export function validateNigerianMovie(
 
   // 2. Authoritative Nigerian country tag present ('NG')
   if (hasNg) {
+    // If production companies exist and are all foreign without NG
+    if (Array.isArray(movieOrItem.production_companies) && movieOrItem.production_companies.length > 0) {
+      const compCountries = movieOrItem.production_companies
+        .map((c: any) => String(c?.origin_country || '').trim().toUpperCase())
+        .filter(Boolean);
+      if (compCountries.length > 0 && !compCountries.includes('NG')) {
+        const hasNollywoodComp = movieOrItem.production_companies.some((c: any) =>
+          NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS.some(kw => String(c?.name || '').toLowerCase().includes(kw))
+        );
+        if (!hasNollywoodComp) {
+          return {
+            status: ValidationStatus.REJECTED_NON_NIGERIAN,
+            isValid: false,
+            reason: `Production companies (${compCountries.join(', ')}) lack authentic Nigerian tags`,
+            countries,
+            originalLanguage: originalLang
+          };
+        }
+      }
+    }
+
     return {
       status: ValidationStatus.VERIFIED_NIGERIAN,
       isValid: true,

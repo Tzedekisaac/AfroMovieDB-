@@ -169,3 +169,18 @@ export interface CustomUserList {
   createdAt: string;
   updatedAt: string;
 }
+
+export type UserRole = 'owner' | 'admin' | 'moderator' | 'user';
+
+export interface AppUserProfile {
+  uid: string;
+  email?: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
+  role: UserRole;
+  isAdmin?: boolean;
+  createdAt?: string | any;
+  lastLoginAt?: string | any;
+  updatedAt?: string | any;
+}
+
