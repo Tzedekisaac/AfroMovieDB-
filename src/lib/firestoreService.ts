@@ -479,7 +479,7 @@ export async function removeUserApiKey(userId: string) {
 // ==========================================
 // ADMIN & RBAC AUTHORIZATION CONFIGURATION
 // ==========================================
-export const PRIMARY_OWNER_UID = 'naijareel-owner-primary';
+export const PRIMARY_OWNER_UID = 'PQaO8nC64QXoQAO6ZQ50nG7i3Ux2';
 export const PRIMARY_OWNER_EMAIL = 'justiceisaac06@gmail.com';
 
 /**
