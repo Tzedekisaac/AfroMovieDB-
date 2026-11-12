@@ -70,7 +70,45 @@ const REVIEWS_STORAGE_KEY = 'afromoviedb_user_reviews_v1';
 
 export default function App() {
   // Navigation View State: 'catalogue', 'profile', or 'admin' command center
-  const [currentView, setCurrentView] = useState<'catalogue' | 'profile' | 'admin'>('catalogue');
+  const [currentView, setCurrentView] = useState<'catalogue' | 'profile' | 'admin'>(() => {
+    if (typeof window !== 'undefined') {
+      const p = window.location.pathname;
+      if (p === '/admin' || p.startsWith('/admin')) return 'admin';
+      if (p === '/profile' || p.startsWith('/profile')) return 'profile';
+    }
+    return 'catalogue';
+  });
+
+  // Synchronize browser history / URL path when switching views
+  const navigateToView = (view: 'catalogue' | 'profile' | 'admin') => {
+    setCurrentView(view);
+    if (view === 'catalogue') {
+      setActiveStandaloneList(null);
+    }
+    try {
+      const targetPath = view === 'admin' ? '/admin' : view === 'profile' ? '/profile' : '/';
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState(null, '', targetPath);
+      }
+    } catch (e) {}
+  };
+
+  // Listen to browser forward/back popstate events
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      if (path === '/admin' || path.startsWith('/admin')) {
+        setCurrentView('admin');
+      } else if (path === '/profile' || path.startsWith('/profile')) {
+        setCurrentView('profile');
+      } else {
+        setCurrentView('catalogue');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1121,12 +1159,7 @@ export default function App() {
         userRole={currentUserProfile?.role}
         onOpenAuth={() => setIsAuthOpen(true)}
         currentView={currentView}
-        onNavigateView={(view) => {
-          setCurrentView(view);
-          if (view === 'catalogue') {
-            setActiveStandaloneList(null);
-          }
-        }}
+        onNavigateView={navigateToView}
         activeTheme={activeTheme}
       />
 
@@ -1200,19 +1233,22 @@ export default function App() {
           onOpenAddMovie={() => setIsAutoPullOpen(true)}
           onOpenAuth={() => setIsAuthOpen(true)}
           onSignOut={handleSignOut}
-          onBackToCatalogue={() => setCurrentView('catalogue')}
+          onBackToCatalogue={() => navigateToView('catalogue')}
           onOpenEdit={(movie) => setEditingMovie(movie)}
+          onNavigateAdmin={() => navigateToView('admin')}
+          isAdmin={currentUserProfile?.isAdmin}
+          userRole={currentUserProfile?.role}
         />
       ) : currentView === 'admin' ? (
         <AdminRoute
           currentUser={currentUser}
-          onNavigateHome={() => setCurrentView('catalogue')}
+          onNavigateHome={() => navigateToView('catalogue')}
           onOpenAuth={() => setIsAuthOpen(true)}
           allowedRoles={['owner', 'admin', 'moderator']}
         >
           <AdminDashboard
             currentUser={currentUser}
-            onNavigateHome={() => setCurrentView('catalogue')}
+            onNavigateHome={() => navigateToView('catalogue')}
             moviesList={moviesList}
             activeTheme={activeTheme}
           />

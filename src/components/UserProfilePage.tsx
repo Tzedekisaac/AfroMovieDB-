@@ -6,11 +6,12 @@ import {
   Clock, ShieldCheck, LogOut, LogIn, Copy, Check, Sparkles,
   Info, Share2, Layers, Pencil, ChevronDown, RotateCcw, Minus,
   Key, KeyRound, Eye, EyeOff, AlertCircle, Compass, RefreshCw,
-  Palette, Globe, Lock, ListFilter
+  Palette, Globe, Lock, ListFilter, Shield
 } from 'lucide-react';
-import { Movie, UserReview, MovieWatchStatus, UserTrackedItem, RecommendationItem, AppTheme, CustomUserList } from '../types';
+import { Movie, UserReview, MovieWatchStatus, UserTrackedItem, RecommendationItem, AppTheme, CustomUserList, AppUserProfile } from '../types';
 import { TrackingStatusPicker, STATUS_CONFIG } from './TrackingStatusPicker';
 import { testTmdbApiKey, getPersonalizedRecommendations } from '../utils/api';
+import { PRIMARY_OWNER_UID, isUserOwner, subscribeToUserProfile } from '../lib/firestoreService';
 
 interface UserProfilePageProps {
   currentUser: User | null;
@@ -40,6 +41,9 @@ interface UserProfilePageProps {
   onSignOut: () => void;
   onBackToCatalogue: () => void;
   onOpenEdit?: (movie: Movie) => void;
+  onNavigateAdmin?: () => void;
+  isAdmin?: boolean;
+  userRole?: string;
 }
 
 export type ProfileTab = 
@@ -82,12 +86,39 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onOpenAuth,
   onSignOut,
   onBackToCatalogue,
-  onOpenEdit
+  onOpenEdit,
+  onNavigateAdmin,
+  isAdmin,
+  userRole
 }) => {
   const [activeTab, setActiveTab] = useState<ProfileTab>('all_tracked');
   const [searchFilter, setSearchFilter] = useState('');
   const [copiedUid, setCopiedUid] = useState(false);
   const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
+  const [profileData, setProfileData] = useState<AppUserProfile | null>(null);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setProfileData(null);
+      return;
+    }
+    const unsub = subscribeToUserProfile(currentUser.uid, (p) => {
+      setProfileData(p);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  const isOwner = currentUser 
+    ? (currentUser.uid === PRIMARY_OWNER_UID || isUserOwner(currentUser))
+    : false;
+  const hasAdminAccess = isOwner 
+    || isAdmin === true
+    || profileData?.isAdmin === true 
+    || profileData?.role === 'admin' 
+    || profileData?.role === 'owner' 
+    || (currentUser as any)?.isAdmin === true 
+    || userRole === 'admin' 
+    || userRole === 'owner';
 
   // API Key Form State
   const [inputApiKey, setInputApiKey] = useState(customTmdbApiKey || '');
@@ -387,7 +418,27 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           <span className="text-white font-medium">User Profile & Activity</span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Prominent Admin Dashboard Shortcut Button */}
+          {hasAdminAccess && (
+            <button
+              id="profile-admin-dashboard-btn"
+              onClick={() => {
+                if (onNavigateAdmin) {
+                  onNavigateAdmin();
+                } else {
+                  window.history.pushState(null, '', '/admin');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:brightness-110 text-white text-xs font-bold shadow-lg shadow-purple-950/40 border border-purple-400/40 transition-all cursor-pointer ring-1 ring-purple-400/30"
+              title="Access the NaijaReel Admin Command Center"
+            >
+              <Shield className="w-3.5 h-3.5 text-purple-200" />
+              <span>Admin Dashboard</span>
+            </button>
+          )}
+
           <button
             id="profile-add-film-shortcut"
             onClick={onOpenAddMovie}
@@ -446,6 +497,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   <ShieldCheck className="w-3 h-3" />
                   <span>Firebase Verified</span>
                 </span>
+                {hasAdminAccess && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/40 text-purple-300 text-[11px] font-bold">
+                    <Shield className="w-3 h-3 text-purple-400" />
+                    <span>{isOwner ? 'System Owner' : 'Administrator'}</span>
+                  </span>
+                )}
                 {customTmdbApiKey && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-semibold">
                     <Key className="w-3 h-3 text-amber-400" />

@@ -1,14 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import { ShieldAlert, Lock, ArrowLeft, LogIn, Loader2, Sparkles } from 'lucide-react';
-import { 
-  isUserOwner, 
-  isUserAdminOrOwner, 
-  isUserModeratorOrHigher, 
-  subscribeToUserProfile,
-  PRIMARY_OWNER_UID,
-  PRIMARY_OWNER_EMAIL
-} from '../lib/firestoreService';
+import { isUserOwner, isUserAdminOrOwner, isUserModeratorOrHigher, subscribeToUserProfile, PRIMARY_OWNER_UID, PRIMARY_OWNER_EMAIL } from '../lib/firestoreService';
 import { AppUserProfile, UserRole } from '../types';
 
 export { PRIMARY_OWNER_UID, PRIMARY_OWNER_EMAIL };

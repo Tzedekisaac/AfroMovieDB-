@@ -87,3 +87,9 @@ test('4. updateUserRole rejects any attempt to modify or revoke the Primary Owne
     /Cannot modify or revoke the Primary Owner role/i
   );
 });
+
+test('5. PRIMARY_OWNER_UID matches exact Firebase Auth UID PQaO8nC64QXoQAO6ZQ50nG7i3Ux2', () => {
+  assert.strictEqual(PRIMARY_OWNER_UID, 'PQaO8nC64QXoQAO6ZQ50nG7i3Ux2');
+  assert.strictEqual(isUserOwner({ uid: 'PQaO8nC64QXoQAO6ZQ50nG7i3Ux2' }), true);
+  assert.strictEqual(isUserAdminOrOwner(null, { uid: 'PQaO8nC64QXoQAO6ZQ50nG7i3Ux2' }), true);
+});
