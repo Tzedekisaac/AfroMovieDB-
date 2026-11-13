@@ -7,9 +7,8 @@ import {
   Play, StopCircle, Filter, Eye, AlertTriangle, Lock,
   CheckSquare, Square, DownloadCloud, CheckCheck, Layers
 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
 import { writeBatch, doc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { 
   subscribeToAllUsers, 
   updateUserRole, 
@@ -18,6 +17,10 @@ import {
   isUserModeratorOrHigher,
   saveFirestoreCustomMovie,
   purgeNonNigerianMoviesFromFirestore,
+  prepareMovieForFirestore,
+  stripUndefined,
+  handleFirestoreError,
+  OperationType,
   PurgeResult,
   PRIMARY_OWNER_UID,
   PRIMARY_OWNER_EMAIL
@@ -103,6 +106,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // ==========================================
   const [isPurging, setIsPurging] = useState(false);
   const [purgeReport, setPurgeReport] = useState<PurgeResult | null>(null);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
   const [isSyncingReleases, setIsSyncingReleases] = useState(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   
@@ -232,71 +236,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setBatchCommitNotice(null);
 
     try {
-      const ai = new GoogleGenAI();
-      const prompt = `You are the chief Nollywood (Nigerian Cinema) film archivist and database curator.
-Generate an authentic, rich list of Nigerian movies matching the category: "${queryToUse}".
-Target size: between 10 to 18 authentic Nollywood films.
+      const response = await fetch('/api/admin/discover-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: queryToUse }),
+      });
 
-CRITICAL RULES:
-1. Every film MUST be an authentic Nigerian Nollywood production. Strictly NO foreign, Hollywood, or Bollywood films.
-2. originCountry MUST explicitly be ["NG"].
-3. Provide realistic release years, authentic renowned Nigerian directors (e.g. Kunle Afolayan, Kemi Adetiba, Funke Akindele, Genevieve Nnaji, Biyi Bandele, Jade Osiberu, Adebayo Tijani, Kayode Kasum, Femi Adebayo, Editi Effiong, etc.), real Nollywood lead actors, authentic genres, and insightful cultural significance.
-
-Respond ONLY with a valid JSON array of objects (no markdown outside the JSON or codeblock):
-[
-  {
-    "title": "Exact Movie Title",
-    "nativeTitle": "Native title in Yoruba/Igbo/Hausa if applicable, otherwise empty string",
-    "tagline": "Captivating official or descriptive tagline",
-    "releaseYear": 2023,
-    "director": "Full Director Name",
-    "producer": "Producer Name or company",
-    "leadCast": [
-      {"actor": "Lead Actor 1", "role": "Character Name"},
-      {"actor": "Lead Actor 2", "role": "Character Name"}
-    ],
-    "genres": ["Drama", "Action"],
-    "languages": ["English", "Nigerian Pidgin"],
-    "era": "Modern Global Era (2019-Present)",
-    "runtimeMinutes": 115,
-    "rating": 8.5,
-    "ratingCount": 1,
-    "synopsis": "Detailed authentic synopsis describing the plot and setting.",
-    "culturalSignificance": "Why this film matters in Nigerian cinema and culture.",
-    "streamingPlatforms": [
-      {"name": "Netflix", "badgeColor": "bg-red-600"}
-    ],
-    "trailerYoutubeId": "",
-    "boxOffice": "₦500M+ Box Office",
-    "originCountry": ["NG"],
-    "originalLanguage": "en"
-  }
-]
-`;
-
-      let responseText = '';
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt
-        });
-        responseText = response.text || '';
-      } catch (geminiErr: any) {
-        console.warn('Gemini 2.5 flash direct call error, attempting backup:', geminiErr);
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: prompt
-        });
-        responseText = response.text || '';
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || `Server error (${response.status}) while discovering movies.`);
       }
 
-      const cleanJson = responseText
-        .replace(/^```json/gim, '')
-        .replace(/^```/gim, '')
-        .trim();
-
-      const parsedArray: any[] = JSON.parse(cleanJson);
-
+      const parsedArray: any[] = data?.movies;
       if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
         throw new Error('Gemini did not return a valid list of movies.');
       }
@@ -323,30 +274,44 @@ Respond ONLY with a valid JSON array of objects (no markdown outside the JSON or
       return;
     }
 
+    const activeUser = currentUser || auth.currentUser;
+    if (!activeUser) {
+      setAiError('Authentication required: please sign in as an admin or owner before committing movies to Firestore.');
+      return;
+    }
+
     setIsCommittingBatch(true);
     setAiError(null);
     setBatchCommitNotice(null);
 
     try {
-      const currentUid = currentUser?.uid || PRIMARY_OWNER_UID;
-      const batch = writeBatch(db);
+      const currentUid = activeUser.uid;
+      const chunkSize = 350;
 
-      for (const item of selectedItems) {
-        const movie = item.movie;
-        const movieRef = doc(db, 'custom_movies', movie.id);
-        const payload: Record<string, any> = {
-          ...movie,
-          originCountry: ['NG'],
-          source: 'custom',
-          isUserAdded: true,
-          addedByUserId: movie.addedByUserId || currentUid,
-          lastEditedByUserId: currentUid,
-          syncedAt: serverTimestamp()
-        };
-        batch.set(movieRef, payload, { merge: true });
+      for (let i = 0; i < selectedItems.length; i += chunkSize) {
+        const chunk = selectedItems.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+
+        for (const item of chunk) {
+          const movie = item.movie;
+          const movieRef = doc(db, 'custom_movies', movie.id);
+          const prepared = prepareMovieForFirestore({
+            ...movie,
+            originCountry: ['NG'],
+            source: 'custom',
+            isUserAdded: true,
+            addedByUserId: movie.addedByUserId || currentUid,
+            lastEditedByUserId: currentUid
+          });
+          const payload = stripUndefined({
+            ...prepared,
+            syncedAt: serverTimestamp()
+          });
+          batch.set(movieRef, payload, { merge: true });
+        }
+
+        await batch.commit();
       }
-
-      await batch.commit();
 
       setBatchCommitNotice(`Successfully committed ${selectedItems.length} verified Nollywood film(s) to Firestore custom_movies!`);
 
@@ -362,7 +327,7 @@ Respond ONLY with a valid JSON array of objects (no markdown outside the JSON or
         setBatchCommitNotice(null);
       }, 5000);
     } catch (err: any) {
-      console.error('Batch commit error:', err);
+      handleFirestoreError(err, OperationType.WRITE, 'custom_movies');
       setAiError(`Failed to commit batch to Firestore: ${err?.message || 'Database error'}`);
     } finally {
       setIsCommittingBatch(false);
@@ -397,72 +362,32 @@ Respond ONLY with a valid JSON array of objects (no markdown outside the JSON or
     setStagedSuccessMessage(null);
 
     try {
-      // Initialize Gemini Client
-      const ai = new GoogleGenAI();
-      const prompt = `You are the chief archivist for Nollywood (Nigerian Cinema).
-Extract and structure rich, authentic metadata for the Nigerian movie: "${aiTitle.trim()}".
-Additional context provided:
-- Premise: ${aiPremise.trim() || 'N/A'}
-- Approximate Year: ${aiYear.trim() || 'N/A'}
-- Director: ${aiDirector.trim() || 'N/A'}
-
-Requirements:
-- MUST be produced in Nigeria or an authentic Nollywood coproduction with origin country ["NG"].
-- Do NOT generate Hollywood, Bollywood, or foreign films.
-- Respond with a pure JSON object (no markdown, no backticks, or with standard json block):
-{
-  "title": "Exact Movie Title",
-  "nativeTitle": "Native language title in Yoruba, Igbo, or Hausa if applicable, otherwise empty string",
-  "tagline": "A punchy, authentic tagline",
-  "releaseYear": 2023,
-  "director": "Full Director Name",
-  "producer": "Producer Name or company",
-  "leadCast": [
-    {"actor": "Lead Actor 1", "role": "Character Name"},
-    {"actor": "Lead Actor 2", "role": "Character Name"}
-  ],
-  "genres": ["Drama", "Crime & Thriller"],
-  "languages": ["English", "Nigerian Pidgin"],
-  "era": "Modern Global Era (2019-Present)",
-  "runtimeMinutes": 110,
-  "rating": 8.0,
-  "ratingCount": 1,
-  "synopsis": "Comprehensive authentic synopsis describing the plot and setting.",
-  "culturalSignificance": "Why this film matters in Nigerian cinematic history and culture.",
-  "streamingPlatforms": [
-    {"name": "Netflix", "badgeColor": "bg-red-600"},
-    {"name": "YouTube", "badgeColor": "bg-red-500"}
-  ],
-  "trailerYoutubeId": "",
-  "boxOffice": "₦500M+ Box Office",
-  "originCountry": ["NG"],
-  "originalLanguage": "en"
-}
-`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt
+      const response = await fetch('/api/admin/extract-movie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: aiTitle.trim(),
+          premise: aiPremise.trim(),
+          year: aiYear.trim(),
+          director: aiDirector.trim(),
+        }),
       });
 
-      const responseText = response.text || '';
-      // Parse JSON from response
-      const cleanJson = responseText
-        .replace(/^```json/gim, '')
-        .replace(/^```/gim, '')
-        .trim();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.movie) {
+        throw new Error(data?.error || `Server error (${response.status}) during metadata extraction.`);
+      }
 
-      const parsed = JSON.parse(cleanJson);
-      
+      const parsed = data.movie;
       const sanitized = sanitizeMovie({
         ...parsed,
-        id: (parsed.title || 'movie').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-        posterUrl: VERIFIED_NOLLYWOOD_FALLBACK_POSTER,
-        backdropUrl: VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP,
+        id: (parsed.title || aiTitle.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+        posterUrl: parsed.posterUrl || VERIFIED_NOLLYWOOD_FALLBACK_POSTER,
+        backdropUrl: parsed.backdropUrl || VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP,
         source: 'custom',
         isUserAdded: true,
         originCountry: ['NG'],
-        addedByUserId: currentUser?.uid || 'admin-portal'
+        addedByUserId: currentUser?.uid || PRIMARY_OWNER_UID
       });
 
       setStagedMovie(sanitized);
@@ -495,10 +420,10 @@ Requirements:
         originCountry: ['NG'],
         source: 'custom',
         isUserAdded: true,
-        addedByUserId: currentUser?.uid || 'admin-portal'
+        addedByUserId: currentUser?.uid || PRIMARY_OWNER_UID
       });
       setStagedMovie(fallbackMovie);
-      setAiError('Notice: Configured using archivist structured templates with authentic Nigerian tags.');
+      setAiError(`Notice: ${err?.message || 'Using archivist structured template with authentic Nigerian tags.'}`);
     } finally {
       setIsGeneratingAi(false);
     }
@@ -582,11 +507,12 @@ Requirements:
   const handleRunPurge = async () => {
     setIsPurging(true);
     setPurgeReport(null);
+    setPurgeError(null);
     try {
       const report = await purgeNonNigerianMoviesFromFirestore();
       setPurgeReport(report);
     } catch (err: any) {
-      alert(`Purge failed: ${err?.message || 'Unknown error'}`);
+      setPurgeError(`Purge failed: ${err?.message || 'Unknown error'}`);
     } finally {
       setIsPurging(false);
     }
@@ -1430,6 +1356,13 @@ Requirements:
                 <p className="text-xs text-slate-400 leading-relaxed mb-4">
                   Permanently deletes documents in <code className="text-rose-300">custom_movies</code> where <code className="text-amber-300">originCountry</code> lacks authentic Nigerian tags or features foreign production studios.
                 </p>
+
+                {purgeError && (
+                  <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2 mb-4">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span>{purgeError}</span>
+                  </div>
+                )}
 
                 {purgeReport && (
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1 mb-4 font-mono">

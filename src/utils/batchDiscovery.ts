@@ -32,7 +32,8 @@ export const ABSTRACT_QUERY_PRESETS = [
 ];
 
 /**
- * Normalizes, aligns metadata, and runs strict Nigerian origin verification on raw AI-discovered movie entries.
+ * Normalizes, aligns metadata, deduplicates, and runs strict Nigerian origin verification
+ * on raw AI-discovered movie entries.
  */
 export function validateAndPrepareDiscoveredBatch(
   rawList: any[],
@@ -41,14 +42,27 @@ export function validateAndPrepareDiscoveredBatch(
 ): DiscoveredBatchItem[] {
   if (!Array.isArray(rawList)) return [];
 
-  return rawList.map((raw: any) => {
-    const normTitle = String(raw?.title || 'Untitled Nollywood Film').trim();
+  const seenIds = new Set<string>();
+  const prepared: DiscoveredBatchItem[] = [];
+
+  rawList.forEach((raw: any, index: number) => {
+    const normTitle = String(raw?.title || '').trim() || `Nollywood Feature ${index + 1}`;
     const releaseYear = Number(raw?.releaseYear) || new Date().getFullYear();
     const era = determineNollywoodEra(releaseYear);
-    const cleanId = normTitle
+    let cleanId = normTitle
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
+      .replace(/(^-|-$)/g, '')
+      .slice(0, 100);
+
+    if (!cleanId || cleanId.length < 2) {
+      cleanId = `nollywood-film-${releaseYear}-${index + 1}`;
+    }
+
+    if (seenIds.has(cleanId)) {
+      return;
+    }
+    seenIds.add(cleanId);
 
     const sanitized = sanitizeMovie({
       ...raw,
@@ -65,12 +79,12 @@ export function validateAndPrepareDiscoveredBatch(
     });
 
     const aligned = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(sanitized) as Movie);
-    const isValid = isNigerianMovie(aligned);
+    const isValid = isNigerianMovie(aligned) && aligned.title.trim().length >= 2 && aligned.id.trim().length >= 2;
     const alreadyExists = existingCatalog.some(
       m => m.id === aligned.id || m.title.toLowerCase().trim() === aligned.title.toLowerCase().trim()
     );
 
-    return {
+    prepared.push({
       id: aligned.id,
       selected: isValid && !alreadyExists,
       movie: aligned,
@@ -81,6 +95,8 @@ export function validateAndPrepareDiscoveredBatch(
         era: aligned.era
       },
       alreadyExists
-    };
+    });
   });
+
+  return prepared;
 }
