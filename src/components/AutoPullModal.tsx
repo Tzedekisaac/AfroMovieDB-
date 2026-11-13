@@ -9,7 +9,8 @@ import {
   pullMovieDetailsFromOnline, 
   WebMovieCandidate,
   POPULAR_NIGERIAN_WEB_SUGGESTIONS,
-  isNigerianMovie 
+  isNigerianMovie,
+  hasExplicitNigerianOrigin 
 } from '../services/moviePuller';
 
 interface AutoPullModalProps {
@@ -44,10 +45,10 @@ export const AutoPullModal: React.FC<AutoPullModalProps> = ({
     setSuccessMessage(null);
 
     try {
-      const results = await searchMoviesOnline(q);
-      const verifiedResults = (results || []).filter(cand => isNigerianMovie(cand));
+      const results = await searchMoviesOnline(q, true);
+      const verifiedResults = (results || []).filter(cand => hasExplicitNigerianOrigin(cand));
       if (!verifiedResults || verifiedResults.length === 0) {
-        setError(`No verified Nollywood movies found for "${q}". Hollywood and non-Nigerian titles are strictly excluded. Try searching a Nigerian title like "Gangs of Lagos", "Shanty Town", or "King of Thieves".`);
+        setError(`No verified Nigerian film found for "${q}". Only real TMDb matches with origin_country: ['NG'] can be imported.`);
       } else {
         setCandidates(verifiedResults.slice(0, 6));
       }
@@ -59,16 +60,16 @@ export const AutoPullModal: React.FC<AutoPullModalProps> = ({
   };
 
   const handlePullCandidate = async (candidate: WebMovieCandidate) => {
-    if (!isNigerianMovie(candidate)) {
-      setError(`Movie "${candidate.title}" does not meet Nollywood origin requirements.`);
+    if (!hasExplicitNigerianOrigin(candidate)) {
+      setError(`No verified Nigerian film found: "${candidate.title}" lacks strict origin_country: ['NG'].`);
       return;
     }
     setPullingId(candidate.tmdbId);
     setError(null);
     try {
-      const fullMovie = await pullMovieDetailsFromOnline(candidate);
-      if (!isNigerianMovie(fullMovie)) {
-        setError(`Movie "${fullMovie.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+      const fullMovie = await pullMovieDetailsFromOnline(candidate, true);
+      if (!hasExplicitNigerianOrigin(fullMovie)) {
+        setError(`No verified Nigerian film found: "${fullMovie.title}" does not have strict origin_country: ['NG'].`);
         return;
       }
       onMoviePulled(fullMovie);

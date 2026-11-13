@@ -580,21 +580,21 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-xs sm:text-sm">
             <div
               id="spec-director-interactive"
-              onClick={() => handleOpenPerson(movie.director, 'Director', movie.directorAvatarUrl, movie.directorTmdbId)}
-              className="group cursor-pointer p-1.5 -m-1.5 rounded-xl hover:bg-slate-800/80 transition-all"
-              title={`Click to view ${movie.director}'s profile & catalogue filmography`}
+              onClick={() => movie.director && handleOpenPerson(movie.director, 'Director', movie.directorAvatarUrl, movie.directorTmdbId)}
+              className={`group p-1.5 -m-1.5 rounded-xl transition-all ${movie.director ? 'cursor-pointer hover:bg-slate-800/80' : ''}`}
+              title={movie.director ? `Click to view ${movie.director}'s profile & catalogue filmography` : 'Director unlisted'}
             >
               <span className="text-slate-500 block mb-1">Director</span>
               <div className="flex items-center gap-2">
                 <PersonHeadshot
-                  personName={movie.director}
+                  personName={movie.director || 'Unlisted'}
                   avatarUrl={movie.directorAvatarUrl}
                   tmdbId={movie.directorTmdbId}
                   size="sm"
                   fallbackIcon="film"
                 />
                 <strong className="text-white font-semibold group-hover:text-emerald-400 transition-colors truncate">
-                  {movie.director}
+                  {movie.director || 'Not listed on TMDb'}
                 </strong>
               </div>
             </div>
@@ -641,7 +641,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 Synopsis
               </h3>
               <p className="text-sm text-slate-300 leading-relaxed">
-                {movie.synopsis}
+                {movie.synopsis || 'No official synopsis returned from TMDb for this title.'}
               </p>
             </div>
 
@@ -651,7 +651,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 Nollywood Cultural Impact
               </h3>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                {movie.culturalSignificance}
+                {movie.culturalSignificance || `${movie.era} Nigerian production catalogued on NaijaReel.`}
               </p>
 
               {movie.amvcaAwards && movie.amvcaAwards.length > 0 && (
@@ -676,36 +676,42 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 <User className="w-4 h-4 text-emerald-400" />
                 Lead Cast & Characters
               </h3>
-              <span className="text-[11px] text-slate-400">
-                Click any talent to view headshot & filmography
-              </span>
+              {movie.leadCast && movie.leadCast.length > 0 && (
+                <span className="text-[11px] text-slate-400">
+                  Click any talent to view headshot & filmography
+                </span>
+              )}
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {movie.leadCast.map((cast, index) => (
-                <div
-                  key={index}
-                  id={`cast-member-card-${index}`}
-                  onClick={() => handleOpenPerson(cast.actor, 'Actor', cast.avatarUrl, cast.tmdbId)}
-                  className="group bg-slate-900/80 border border-slate-800 hover:border-emerald-500/60 hover:bg-slate-800/90 rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-all shadow-sm"
-                  title={`Click to view ${cast.actor}'s profile & works`}
-                >
-                  <PersonHeadshot
-                    personName={cast.actor}
-                    avatarUrl={cast.avatarUrl}
-                    tmdbId={cast.tmdbId}
-                    size="md"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-300 transition-colors truncate">
-                      {cast.actor}
-                    </p>
-                    <p className="text-[11px] text-slate-400 truncate">
-                      {cast.role}
-                    </p>
+            {movie.leadCast && movie.leadCast.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {movie.leadCast.map((cast, index) => (
+                  <div
+                    key={index}
+                    id={`cast-member-card-${index}`}
+                    onClick={() => handleOpenPerson(cast.actor, 'Actor', cast.avatarUrl, cast.tmdbId)}
+                    className="group bg-slate-900/80 border border-slate-800 hover:border-emerald-500/60 hover:bg-slate-800/90 rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-all shadow-sm"
+                    title={`Click to view ${cast.actor}'s profile & works`}
+                  >
+                    <PersonHeadshot
+                      personName={cast.actor}
+                      avatarUrl={cast.avatarUrl}
+                      tmdbId={cast.tmdbId}
+                      size="md"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-300 transition-colors truncate">
+                        {cast.actor}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        {cast.role}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">Cast credits not listed on TMDb.</p>
+            )}
           </div>
 
           {/* Interactive User Reviews & Ratings Section */}

@@ -268,11 +268,11 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
 
   const safeData: Record<string, any> = {
     id: movie.id || '',
-    title: movie.title ? String(movie.title).trim() : 'Untitled Nollywood Film',
+    title: movie.title ? String(movie.title).trim() : '',
     nativeTitle: movie.nativeTitle ? String(movie.nativeTitle).trim() : '',
     tagline: movie.tagline ? String(movie.tagline).trim() : '',
     releaseYear: Number(movie.releaseYear) || new Date().getFullYear(),
-    director: movie.director ? String(movie.director).trim() : 'Nigerian Filmmaker Team',
+    director: movie.director ? String(movie.director).trim() : '',
     directorAvatarUrl: movie.directorAvatarUrl ? String(movie.directorAvatarUrl).trim() : '',
     directorTmdbId: movie.directorTmdbId !== undefined && movie.directorTmdbId !== null ? Number(movie.directorTmdbId) : null,
     producer: movie.producer ? String(movie.producer).trim() : '',
@@ -288,8 +288,8 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     languages: parseSpokenLanguages(movie),
     era: movie.era || 'Modern Global Era (2019-Present)',
     runtimeMinutes: Number(movie.runtimeMinutes) || 105,
-    rating: typeof movie.rating === 'number' && !isNaN(movie.rating) ? movie.rating : 8.0,
-    ratingCount: Number(movie.ratingCount) || 1,
+    rating: typeof movie.rating === 'number' && !isNaN(movie.rating) ? movie.rating : 0,
+    ratingCount: Number(movie.ratingCount) || 0,
     boxOffice: movie.boxOffice || '',
     posterUrl: cleanedPoster,
     backdropUrl: cleanedBackdrop,
@@ -298,7 +298,7 @@ export function prepareMovieForFirestore(movie: Partial<Movie> & Record<string, 
     collections: movie.collections,
     originCountry: Array.isArray(movie.originCountry) && movie.originCountry.length > 0
       ? movie.originCountry.map((country: unknown) => String(country || '').trim().toUpperCase()).filter(Boolean)
-      : ['NG'],
+      : [],
     originalLanguage: typeof movie.originalLanguage === 'string' && movie.originalLanguage.trim() ? movie.originalLanguage.trim().toLowerCase() : 'en',
     streamingPlatforms: Array.isArray(movie.streamingPlatforms)
       ? movie.streamingPlatforms.map((p) => ({

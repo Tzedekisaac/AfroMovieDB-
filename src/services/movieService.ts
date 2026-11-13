@@ -22,7 +22,8 @@ import {
   pullMovieDetailsFromOnline, 
   searchMoviesOnline, 
   WebMovieCandidate,
-  bulkSyncNigerianNewReleases 
+  bulkSyncNigerianNewReleases,
+  hasExplicitNigerianOrigin 
 } from '../utils/api.ts';
 import { isNigerianMovie } from '../utils/nigerianMovieValidator.ts';
 
@@ -87,9 +88,9 @@ export async function fetchAndVerifyOnlineMovie(
     const rawMovie = await pullMovieDetailsFromOnline(candidate, forceRefresh);
     if (!rawMovie) return null;
 
-    // Cross-reference regional origin
-    if (!isNigerianMovie(rawMovie)) {
-      console.warn(`Candidate "${rawMovie.title}" rejected: Does not meet Nigerian cinema criteria.`);
+    // Cross-reference regional origin strictly
+    if (!hasExplicitNigerianOrigin(rawMovie)) {
+      console.warn(`Candidate "${rawMovie.title}" rejected: Does not meet strict origin_country: ['NG'] criteria.`);
       return null;
     }
 
@@ -122,5 +123,6 @@ export async function fetchAndVerifyOnlineMovie(
 export {
   pullMovieDetailsFromOnline,
   searchMoviesOnline,
-  bulkSyncNigerianNewReleases
+  bulkSyncNigerianNewReleases,
+  hasExplicitNigerianOrigin
 };

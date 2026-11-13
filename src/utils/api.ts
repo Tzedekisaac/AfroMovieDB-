@@ -241,9 +241,18 @@ export function pruneExpiredCache(): void {
 }
 
 /**
+ * Strict online-search check: requires explicit 'NG' in origin_country / production_countries
+ * AND passing authoritative Nigerian cinema verification (blocks blacklisted titles/crew and foreign studios).
+ */
+export function hasExplicitNigerianOrigin(movieOrItem: any): boolean {
+  if (!movieOrItem || typeof movieOrItem !== 'object') return false;
+  const countries = extractOriginCountries(movieOrItem);
+  return countries.includes(NIGERIAN_ORIGIN_COUNTRY) && isNigerianMovie(movieOrItem);
+}
+
+/**
  * Search movies from the internet (TMDb) with 2-hour tiered localStorage caching.
- * CRITICAL REQUIREMENT: Automatically appends 'Nollywood' or 'Nigerian movie' to the query
- * if not already present, preventing name collisions with foreign films (e.g. 'King of Thieves Nollywood').
+ * Enforces strict origin_country: ['NG'] filtering so only verified Nigerian films are returned.
  */
 export async function searchMoviesOnline(
   query: string,
@@ -258,8 +267,8 @@ export async function searchMoviesOnline(
   if (!forceRefresh) {
     const cached = getCachedItem<WebMovieCandidate[]>(cacheKey);
     if (cached) {
-      // Re-verify cached items so no foreign titles linger in local storage
-      const verified = cached.filter(cand => isNigerianMovie(cand));
+      // Re-verify cached items with strict origin_country: ['NG'] filtering
+      const verified = cached.filter(cand => hasExplicitNigerianOrigin(cand));
       if (verified.length > 0) {
         return verified;
       }
@@ -325,8 +334,8 @@ export async function searchMoviesOnline(
       })
     );
 
-    // Strictly filter out any foreign movies from search results
-    const filteredResults = enrichedResults.filter((item: any) => isNigerianMovie(item));
+    // Strictly filter out any foreign or unverified movies missing explicit 'NG' origin_country
+    const filteredResults = enrichedResults.filter((item: any) => hasExplicitNigerianOrigin(item));
     const formatted = filteredResults.map((item: any) => sanitizeCandidate(item, cleanQuery));
     if (formatted.length > 0) {
       setCachedItem(cacheKey, formatted, SEARCH_TTL_MS);
@@ -392,21 +401,21 @@ export async function safeTmdbFetch(
  * Rigorously sanitizes candidate movie data discovered from TMDb or search endpoints.
  * Strips out or defaults any undefined or null properties to prevent runtime crashes.
  */
-export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood Film'): WebMovieCandidate {
+export function sanitizeCandidate(item: any, fallbackTitle: string = ''): WebMovieCandidate {
   if (!item || typeof item !== 'object') {
     return {
-      tmdbId: Date.now(),
+      tmdbId: 0,
       title: fallbackTitle,
       originalTitle: '',
       releaseYear: new Date().getFullYear(),
-      overview: 'A captivating Nollywood cinematic story celebrating Nigerian film culture.',
-      posterUrl: FALLBACK_POSTER,
-      backdropUrl: FALLBACK_BACKDROP,
-      rating: 7.8,
-      ratingCount: 120,
-      genreIds: [18],
+      overview: '',
+      posterUrl: '',
+      backdropUrl: '',
+      rating: 0,
+      ratingCount: 0,
+      genreIds: [],
       language: 'en',
-      popularity: 10
+      popularity: 0
     };
   }
 
@@ -438,7 +447,7 @@ export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood 
     ? `${TMDB_IMAGE_BASE}/w780${item.poster_path}`
     : typeof item.posterUrl === 'string' && item.posterUrl.trim().startsWith('http')
       ? item.posterUrl.trim()
-      : FALLBACK_POSTER;
+      : '';
 
   const backdropPath = typeof item.backdrop_path === 'string' && item.backdrop_path.trim()
     ? `${TMDB_IMAGE_BASE}/original${item.backdrop_path}`
@@ -450,13 +459,13 @@ export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood 
     ? Math.min(10, Math.max(0, Math.round(item.vote_average * 10) / 10))
     : typeof item.rating === 'number' && !isNaN(item.rating) && item.rating > 0
       ? Math.min(10, Math.max(0, Math.round(item.rating * 10) / 10))
-      : 7.8;
+      : 0;
 
   const ratingCount = typeof item.vote_count === 'number' && !isNaN(item.vote_count) && item.vote_count >= 0
     ? Math.floor(item.vote_count)
     : typeof item.ratingCount === 'number' && !isNaN(item.ratingCount) && item.ratingCount >= 0
       ? Math.floor(item.ratingCount)
-      : 120;
+      : 0;
 
   const genreIds = Array.isArray(item.genre_ids)
     ? item.genre_ids.filter((g: any) => typeof g === 'number' && !isNaN(g))
@@ -466,7 +475,7 @@ export function sanitizeCandidate(item: any, fallbackTitle: string = 'Nollywood 
 
   const overview = typeof item.overview === 'string' && item.overview.trim()
     ? item.overview.trim()
-    : 'A captivating Nollywood cinematic story celebrating Nigerian film culture.';
+    : '';
 
   const language = typeof item.original_language === 'string' && item.original_language.trim()
     ? item.original_language.trim()
@@ -519,30 +528,30 @@ export function formatTmdbResult(item: any, fallbackTitle: string): WebMovieCand
  */
 export function sanitizeMovie(movie: any): Movie {
   if (!movie || typeof movie !== 'object') {
-    const fallbackId = `nollywood-classic-${Date.now()}`;
+    const fallbackId = `movie-${Date.now()}`;
     return sanitizeAndTagMovie({
       id: fallbackId,
-      title: 'Untitled Nollywood Film',
+      title: '',
       nativeTitle: '',
-      tagline: 'A compelling Nigerian cinematic story.',
+      tagline: '',
       releaseYear: new Date().getFullYear(),
-      director: 'Unknown Director',
+      director: '',
       directorAvatarUrl: '',
-      leadCast: [{ actor: 'Nollywood Cast Ensemble', role: 'Main Cast', avatarUrl: '' }],
+      leadCast: [],
       genres: ['Drama'],
       languages: ['English'],
       era: 'Modern Global Era (2019-Present)',
       runtimeMinutes: 105,
-      rating: 7.8,
-      ratingCount: 120,
-      posterUrl: FALLBACK_POSTER,
-      backdropUrl: FALLBACK_BACKDROP,
-      synopsis: 'A captivating Nollywood cinematic story celebrating Nigerian film culture.',
-      culturalSignificance: 'Celebrated Nigerian film reflecting rich cultural narratives.',
-      streamingPlatforms: [{ name: 'YouTube', badgeColor: 'bg-red-500', url: 'https://www.youtube.com' }],
+      rating: 0,
+      ratingCount: 0,
+      posterUrl: '',
+      backdropUrl: '',
+      synopsis: '',
+      culturalSignificance: '',
+      streamingPlatforms: [],
       collections: [],
       trailerYoutubeId: '',
-      amvcaAwards: ['Nollywood Cinema Selection'],
+      amvcaAwards: [],
       featured: false,
       boxOfficeChampion: false,
       isUserAdded: true,
@@ -551,7 +560,7 @@ export function sanitizeMovie(movie: any): Movie {
   }
 
   // 1. Title
-  const title = String(movie.title || '').trim() || 'Untitled Nollywood Film';
+  const title = String(movie.title || '').trim();
 
   // 2. Year & Era
   let year = new Date().getFullYear();
@@ -570,7 +579,7 @@ export function sanitizeMovie(movie: any): Movie {
   if (!id) {
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const numId = typeof movie.tmdbId === 'number' && !isNaN(movie.tmdbId) ? movie.tmdbId : Date.now();
-    id = `${slug || 'nollywood'}-${numId}`;
+    id = `${slug || 'film'}-${numId}`;
   }
 
   // 4. TMDb numerical ID
@@ -582,14 +591,14 @@ export function sanitizeMovie(movie: any): Movie {
   }
 
   // 5. Director info
-  const director = String(movie.director || '').trim() || 'Unknown Director';
+  const director = String(movie.director || '').trim();
   const directorAvatarUrl = typeof movie.directorAvatarUrl === 'string' ? movie.directorAvatarUrl.trim() : '';
   let directorTmdbId: number | undefined = undefined;
   if (typeof movie.directorTmdbId === 'number' && !isNaN(movie.directorTmdbId) && movie.directorTmdbId > 0) {
     directorTmdbId = Math.floor(movie.directorTmdbId);
   }
 
-  // 6. Lead Cast
+  // 6. Lead Cast (no fabricated cast placeholders)
   let leadCast: CastMember[] = [];
   if (Array.isArray(movie.leadCast)) {
     leadCast = movie.leadCast
@@ -597,7 +606,7 @@ export function sanitizeMovie(movie: any): Movie {
         if (!c || typeof c !== 'object') return null;
         const actor = String(c.actor || c.name || '').trim();
         if (!actor) return null;
-        const role = String(c.role || c.character || 'Main Cast').trim() || 'Main Cast';
+        const role = String(c.role || c.character || 'Cast Member').trim() || 'Cast Member';
         const avatarUrl = typeof c.avatarUrl === 'string' ? c.avatarUrl.trim() : (typeof c.profile_path === 'string' ? `${TMDB_IMAGE_BASE}/w185${c.profile_path}` : '');
         const castTmdbId = typeof c.tmdbId === 'number' && !isNaN(c.tmdbId) ? c.tmdbId : (typeof c.id === 'number' && !isNaN(c.id) ? c.id : undefined);
         return {
@@ -608,9 +617,6 @@ export function sanitizeMovie(movie: any): Movie {
         };
       })
       .filter(Boolean) as CastMember[];
-  }
-  if (leadCast.length === 0) {
-    leadCast = [{ actor: 'Nollywood Cast Ensemble', role: 'Main Cast', avatarUrl: '' }];
   }
 
   // 7. Genres
@@ -643,15 +649,15 @@ export function sanitizeMovie(movie: any): Movie {
     runtimeMinutes = Math.floor(movie.runtime);
   }
 
-  // 10. Rating and rating count
-  let rating = 7.8;
+  // 10. Rating and rating count (0 when unrated — never invent fake scores)
+  let rating = 0;
   if (typeof movie.rating === 'number' && !isNaN(movie.rating) && movie.rating > 0) {
     rating = Math.min(10, Math.max(0, Math.round(movie.rating * 10) / 10));
   } else if (typeof movie.vote_average === 'number' && !isNaN(movie.vote_average) && movie.vote_average > 0) {
     rating = Math.min(10, Math.max(0, Math.round(movie.vote_average * 10) / 10));
   }
 
-  let ratingCount = 120;
+  let ratingCount = 0;
   if (typeof movie.ratingCount === 'number' && !isNaN(movie.ratingCount) && movie.ratingCount >= 0) {
     ratingCount = Math.floor(movie.ratingCount);
   } else if (typeof movie.vote_count === 'number' && !isNaN(movie.vote_count) && movie.vote_count >= 0) {
@@ -663,17 +669,16 @@ export function sanitizeMovie(movie: any): Movie {
     ? movie.posterUrl.trim()
     : typeof movie.poster_path === 'string' && movie.poster_path.trim()
       ? `${TMDB_IMAGE_BASE}/w780${movie.poster_path}`
-      : FALLBACK_POSTER;
+      : '';
 
   const backdropUrl = typeof movie.backdropUrl === 'string' && movie.backdropUrl.trim().startsWith('http')
     ? movie.backdropUrl.trim()
     : typeof movie.backdrop_path === 'string' && movie.backdrop_path.trim()
       ? `${TMDB_IMAGE_BASE}/original${movie.backdrop_path}`
-      : (posterUrl || FALLBACK_BACKDROP);
+      : posterUrl;
 
-  // 12. Synopsis & native title
-  const synopsis = String(movie.synopsis || movie.overview || '').trim() ||
-    'A captivating Nollywood cinematic story celebrating Nigerian film culture.';
+  // 12. Synopsis & native title (never fabricate generic synopses)
+  const synopsis = String(movie.synopsis || movie.overview || '').trim();
   const tagline = typeof movie.tagline === 'string' ? movie.tagline.trim() : '';
   const nativeTitle = typeof movie.nativeTitle === 'string' && movie.nativeTitle.trim() !== title 
     ? movie.nativeTitle.trim() 
@@ -715,11 +720,10 @@ export function sanitizeMovie(movie: any): Movie {
   }
 
   const trailerYoutubeId = typeof movie.trailerYoutubeId === 'string' ? movie.trailerYoutubeId.trim() : '';
-  const culturalSignificance = String(movie.culturalSignificance || '').trim() ||
-    `Discovered from TMDb Nollywood Archive. Key cultural representation of ${era}.`;
+  const culturalSignificance = String(movie.culturalSignificance || '').trim();
   const amvcaAwards = Array.isArray(movie.amvcaAwards)
     ? movie.amvcaAwards.map((a: any) => String(a || '').trim()).filter(Boolean)
-    : ['Nollywood Cinema Selection'];
+    : [];
   const collections = normalizeMovieCollections(movie.collections);
   const rawCountries = movie.originCountry ?? movie.origin_country ?? movie.country ?? movie.production_countries;
   const originCountry = Array.isArray(rawCountries)
@@ -938,7 +942,7 @@ export async function pullMovieDetailsFromOnline(
   if (!forceRefresh) {
     const cached = getCachedItem<Movie>(cacheKey);
     if (cached) {
-      if (isNigerianMovie(cached)) {
+      if (hasExplicitNigerianOrigin(cached)) {
         return sanitizeMovie(cached);
       } else {
         removeCachedItem(cacheKey);
@@ -946,14 +950,18 @@ export async function pullMovieDetailsFromOnline(
     }
   }
 
+  if (!cleanCand.tmdbId || cleanCand.tmdbId <= 0) {
+    throw new Error(`No verified Nigerian film found: missing valid TMDb database ID for "${cleanCand.title || 'query'}".`);
+  }
+
   let director = '';
   let directorAvatarUrl = '';
   let directorTmdbId: number | undefined = undefined;
   let leadCast: CastMember[] = [];
   let runtime = 110;
-  let trailerYoutubeId = 'v8wIe7_xK3U'; // Default trailer fallback
+  let trailerYoutubeId = '';
   let genres: string[] = [];
-  let tagline = 'A compelling Nigerian cinematic story.';
+  let tagline = '';
   let detailsData: any = null;
 
   try {
@@ -1048,11 +1056,11 @@ export async function pullMovieDetailsFromOnline(
 
   throwIfAborted(signal);
 
-  // Strict Nigerian verification: reject if neither detailsData nor candidate qualify as Nigerian
-  const candidateIsValid = isNigerianMovie(cleanCand);
-  const detailsIsValid = detailsData ? isNigerianMovie(detailsData) : false;
-  if (!candidateIsValid && !detailsIsValid) {
-    throw new Error(`Movie "${cleanCand.title}" rejected: Does not meet Nigerian origin country or language requirements.`);
+  // Strict Nigerian verification: reject if TMDb details (or candidate when details unavailable) fail explicit origin_country: ['NG']
+  const candidateHasNg = hasExplicitNigerianOrigin(cleanCand);
+  const detailsHasNg = detailsData ? hasExplicitNigerianOrigin(detailsData) : false;
+  if (detailsData ? !detailsHasNg : !candidateHasNg) {
+    throw new Error(`No verified Nigerian film found: "${cleanCand.title}" does not meet strict origin_country: ['NG'] requirements.`);
   }
 
   // Parse spoken languages directly from TMDb metadata, defaulting to English if missing
@@ -1060,11 +1068,11 @@ export async function pullMovieDetailsFromOnline(
     ? parseSpokenLanguages(detailsData)
     : parseSpokenLanguages(cleanCand);
 
-  // Extract origin countries
+  // Extract origin countries (already guaranteed to contain 'NG' above)
   const extractedCountries = detailsData
     ? extractOriginCountries(detailsData)
     : extractOriginCountries(cleanCand);
-  const originCountry = extractedCountries.length > 0 ? extractedCountries : ['NG'];
+  const originCountry = extractedCountries;
   const originalLanguage = String(detailsData?.original_language || cleanCand.language || 'en').trim().toLowerCase();
 
   // Fallback genres if empty
@@ -1095,39 +1103,42 @@ export async function pullMovieDetailsFromOnline(
     platforms.push({ name: 'Africa Magic', badgeColor: 'bg-purple-600', url: 'https://www.dstv.com' });
   }
 
-  const cleanId = cleanCand.title
+  const resolvedTitle = String(detailsData?.title || cleanCand.title || '').trim();
+  const cleanId = resolvedTitle
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') + '-' + (cleanCand.tmdbId || Date.now().toString().slice(-4));
 
+  const realSynopsis = typeof detailsData?.overview === 'string' && detailsData.overview.trim()
+    ? detailsData.overview.trim()
+    : (cleanCand.overview || '');
+
   const rawFullMovie = {
     id: cleanId,
-    title: cleanCand.title || 'Untitled Nollywood Film',
-    nativeTitle: (cleanCand.originalTitle && cleanCand.originalTitle !== cleanCand.title) ? cleanCand.originalTitle : '',
+    title: resolvedTitle,
+    nativeTitle: (cleanCand.originalTitle && cleanCand.originalTitle !== resolvedTitle) ? cleanCand.originalTitle : '',
     tagline: tagline || '',
     releaseYear: cleanCand.releaseYear || new Date().getFullYear(),
-    director: director || 'Nigerian Filmmaker Team',
+    director: director || '',
     directorAvatarUrl: directorAvatarUrl || '',
     directorTmdbId: directorTmdbId,
-    leadCast: leadCast.length > 0 ? leadCast : [
-      { actor: 'Nollywood Cast Ensemble', role: 'Main Cast', avatarUrl: '' }
-    ],
+    leadCast,
     genres: genres.length > 0 ? genres : ['Drama'],
     languages: parsedLanguages,
     originCountry,
     originalLanguage,
     era: era || determineEra(cleanCand.releaseYear),
     runtimeMinutes: Number(runtime) || 105,
-    rating: typeof cleanCand.rating === 'number' && cleanCand.rating > 0 ? cleanCand.rating : 8.0,
-    ratingCount: Number(cleanCand.ratingCount) || 120,
-    posterUrl: cleanCand.posterUrl || FALLBACK_POSTER,
-    backdropUrl: cleanCand.backdropUrl || cleanCand.posterUrl || FALLBACK_BACKDROP,
-    synopsis: cleanCand.overview || 'A gripping Nollywood production highlighting rich cultural storytelling.',
-    culturalSignificance: `Discovered from TMDb Nollywood Archive. Represents ${era || determineEra(cleanCand.releaseYear)}.`,
+    rating: typeof cleanCand.rating === 'number' && cleanCand.rating > 0 ? cleanCand.rating : 0,
+    ratingCount: Number(cleanCand.ratingCount) || 0,
+    posterUrl: cleanCand.posterUrl || '',
+    backdropUrl: cleanCand.backdropUrl || cleanCand.posterUrl || '',
+    synopsis: realSynopsis,
+    culturalSignificance: '',
     streamingPlatforms: platforms,
     collections: normalizeMovieCollections([]),
     trailerYoutubeId: trailerYoutubeId || '',
-    amvcaAwards: ['Nollywood Cinema Selection'],
+    amvcaAwards: [],
     featured: false,
     boxOfficeChampion: false,
     isUserAdded: true,

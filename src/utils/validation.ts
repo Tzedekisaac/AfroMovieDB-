@@ -274,12 +274,12 @@ export function sanitizeAndAlignMovieMetadata<T extends Partial<Movie>>(movie: T
 
   const leadCast = Array.isArray(movie.leadCast) && movie.leadCast.length > 0
     ? movie.leadCast.map(c => ({
-        actor: String(c.actor || 'Nollywood Actor').trim(),
-        role: String(c.role || 'Lead Character').trim(),
+        actor: String(c.actor || '').trim(),
+        role: String(c.role || 'Cast Member').trim(),
         avatarUrl: c.avatarUrl || undefined,
         tmdbId: c.tmdbId ? Number(c.tmdbId) : undefined
-      }))
-    : [{ actor: 'Nollywood Cast', role: 'Lead Character' }];
+      })).filter(c => c.actor.length > 0)
+    : [];
 
   const safePlatforms: StreamingPlatform[] = Array.isArray(movie.streamingPlatforms) && movie.streamingPlatforms.length > 0
     ? movie.streamingPlatforms.map(p => ({
@@ -289,13 +289,13 @@ export function sanitizeAndAlignMovieMetadata<T extends Partial<Movie>>(movie: T
       }))
     : [{ name: 'Cinema', badgeColor: 'bg-emerald-600' }];
 
-  const rating = typeof movie.rating === 'number' && !isNaN(movie.rating)
+  const rating = typeof movie.rating === 'number' && !isNaN(movie.rating) && movie.rating > 0
     ? Math.max(1, Math.min(10, Math.round(movie.rating * 10) / 10))
-    : 8.0;
+    : 0;
 
-  const ratingCount = typeof movie.ratingCount === 'number' && !isNaN(movie.ratingCount)
-    ? Math.max(1, Math.round(movie.ratingCount))
-    : 25;
+  const ratingCount = typeof movie.ratingCount === 'number' && !isNaN(movie.ratingCount) && movie.ratingCount >= 0
+    ? Math.round(movie.ratingCount)
+    : 0;
 
   const runtimeMinutes = typeof movie.runtimeMinutes === 'number' && !isNaN(movie.runtimeMinutes)
     ? Math.max(20, Math.min(360, Math.round(movie.runtimeMinutes)))
@@ -313,7 +313,7 @@ export function sanitizeAndAlignMovieMetadata<T extends Partial<Movie>>(movie: T
     id: safeId,
     title,
     nativeTitle: movie.nativeTitle ? movie.nativeTitle.trim() : undefined,
-    tagline: movie.tagline ? movie.tagline.trim() : `${title} — A celebrated Nollywood story.`,
+    tagline: movie.tagline ? movie.tagline.trim() : '',
     releaseYear,
     director,
     directorAvatarUrl: movie.directorAvatarUrl || undefined,
@@ -331,15 +331,15 @@ export function sanitizeAndAlignMovieMetadata<T extends Partial<Movie>>(movie: T
     backdropUrl,
     synopsis: movie.synopsis && movie.synopsis.trim().length > 0
       ? movie.synopsis.trim()
-      : `An acclaimed Nigerian film capturing authentic cultural storytelling, drama, and contemporary Nollywood artistry.`,
+      : '',
     culturalSignificance: movie.culturalSignificance && movie.culturalSignificance.trim().length > 0
       ? movie.culturalSignificance.trim()
-      : `Highlights the vibrant storytelling traditions of Nigerian cinema.`,
+      : '',
     streamingPlatforms: safePlatforms,
     collections: normalizeMovieCollections(movie.collections),
     originCountry: Array.isArray(movie.originCountry) && movie.originCountry.length > 0
       ? movie.originCountry
-      : [NIGERIAN_ORIGIN_COUNTRY],
+      : [],
     originalLanguage: movie.originalLanguage || 'en',
     trailerYoutubeId: movie.trailerYoutubeId ? movie.trailerYoutubeId.trim() : '',
     amvcaAwards: Array.isArray(movie.amvcaAwards) ? movie.amvcaAwards : undefined,

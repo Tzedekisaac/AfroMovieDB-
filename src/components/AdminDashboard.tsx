@@ -1,26 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User } from 'firebase/auth';
 import { 
-  Sparkles, Shield, Users, RefreshCw, Trash2, CheckCircle2, 
-  AlertCircle, Search, Film, Crown, UserCheck, UserX, ArrowLeft,
-  Sliders, Database, ExternalLink, Loader2, ArrowUpRight, Copy, Check,
-  Play, StopCircle, Filter, Eye, AlertTriangle, Lock,
-  CheckSquare, Square, DownloadCloud, CheckCheck, Layers
+  Shield, Users, RefreshCw, Trash2, CheckCircle2, 
+  AlertCircle, Search, Film, Crown, UserCheck, ArrowLeft,
+  Database, Loader2, Copy, Check, Globe,
+  Play, Filter, Eye, Lock
 } from 'lucide-react';
-import { writeBatch, doc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { auth } from '../lib/firebase';
 import { 
   subscribeToAllUsers, 
   updateUserRole, 
   isUserOwner, 
-  isUserAdminOrOwner, 
-  isUserModeratorOrHigher,
   saveFirestoreCustomMovie,
   purgeNonNigerianMoviesFromFirestore,
-  prepareMovieForFirestore,
-  stripUndefined,
-  handleFirestoreError,
-  OperationType,
   PurgeResult,
   PRIMARY_OWNER_UID,
   PRIMARY_OWNER_EMAIL
@@ -32,26 +24,15 @@ import {
   runDeepHistoricalSweep,
   HistoricalSweepProgress,
   WebMovieCandidate,
-  isNigerianMovie,
-  sanitizeMovie
+  POPULAR_NIGERIAN_WEB_SUGGESTIONS,
+  hasExplicitNigerianOrigin
 } from '../utils/api';
+import { extractOriginCountries } from '../utils/nigerianMovieValidator';
 import { 
-  validateMovieArtwork, 
-  determineNollywoodEra, 
-  sanitizeAndAlignMovieMetadata,
-  VERIFIED_NOLLYWOOD_FALLBACK_POSTER, 
-  VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP 
-} from '../utils/validation';
-import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie';
+  evaluateTmdbSearchResults, 
+  canSaveVerifiedTmdbMovie 
+} from '../utils/tmdbIngestion';
 import { AppUserProfile, Movie, UserRole, AppTheme } from '../types';
-import { 
-  DiscoveredBatchItem, 
-  ABSTRACT_QUERY_PRESETS, 
-  validateAndPrepareDiscoveredBatch 
-} from '../utils/batchDiscovery';
-
-export type { DiscoveredBatchItem };
-export { ABSTRACT_QUERY_PRESETS, validateAndPrepareDiscoveredBatch };
 
 interface AdminDashboardProps {
   currentUser: User | null;
@@ -70,33 +51,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'import' | 'sweeps' | 'users'>('import');
 
   // ==========================================
-  // TAB A: WEB / AI MOVIE IMPORT STATE
+  // TAB A: ONLINE SEARCH (TMDB) INGESTION STATE
   // ==========================================
-  const [importMode, setImportMode] = useState<'ai' | 'tmdb'>('ai');
-  const [aiSubMode, setAiSubMode] = useState<'batch' | 'single'>('batch');
-
-  // Abstract Query Batch Discovery State
-  const [abstractPrompt, setAbstractPrompt] = useState('Top 20 Nollywood box office movies');
-  const [isDiscoveringBatch, setIsDiscoveringBatch] = useState(false);
-  const [discoveredBatch, setDiscoveredBatch] = useState<DiscoveredBatchItem[]>([]);
-  const [isCommittingBatch, setIsCommittingBatch] = useState(false);
-  const [batchCommitNotice, setBatchCommitNotice] = useState<string | null>(null);
-
-  // Single Film AI Extractor State
-  const [aiTitle, setAiTitle] = useState('');
-  const [aiPremise, setAiPremise] = useState('');
-  const [aiYear, setAiYear] = useState('');
-  const [aiDirector, setAiDirector] = useState('');
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-
-  // TMDb Web Search State
   const [tmdbQuery, setTmdbQuery] = useState('');
   const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
   const [tmdbCandidates, setTmdbCandidates] = useState<WebMovieCandidate[]>([]);
   const [pullingTmdbId, setPullingTmdbId] = useState<number | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Staged Movie Preview & Validation (Single Mode)
+  // Staged Movie Preview & Verification
   const [stagedMovie, setStagedMovie] = useState<Partial<Movie> | null>(null);
   const [isSavingStaged, setIsSavingStaged] = useState(false);
   const [stagedSuccessMessage, setStagedSuccessMessage] = useState<string | null>(null);
@@ -155,18 +118,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   }, [usersList, userSearchQuery, userRoleFilter]);
 
-  // Batch selection metrics
-  const selectedBatchCount = useMemo(() => 
-    discoveredBatch.filter(item => item.selected && item.validation.isValid).length,
-    [discoveredBatch]
-  );
-  const alreadyInCatalogBatchCount = useMemo(() => 
-    discoveredBatch.filter(item => item.alreadyExists).length,
-    [discoveredBatch]
-  );
-  const validBatchCount = useMemo(() => 
-    discoveredBatch.filter(item => item.validation.isValid).length,
-    [discoveredBatch]
+  const canSaveStagedMovie = useMemo(
+    () => canSaveVerifiedTmdbMovie(stagedMovie, searchError),
+    [stagedMovie, searchError]
   );
 
   // Copy UID helper
@@ -222,280 +176,104 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // ==========================================
-  // TAB A ACTIONS: AI GENERATION & TMDB SEARCH
+  // TAB A ACTIONS: ONLINE SEARCH (TMDB) ONLY
   // ==========================================
-  const handleDiscoverBatch = async (overridePrompt?: string) => {
-    const queryToUse = (overridePrompt || abstractPrompt).trim();
-    if (!queryToUse) {
-      setAiError('Please enter an abstract category, theme, or topic prompt.');
-      return;
+  const handleSearchTmdb = async (overrideQuery?: string) => {
+    const queryToSearch = (overrideQuery !== undefined ? overrideQuery : tmdbQuery).trim();
+    if (!queryToSearch) return;
+    if (overrideQuery !== undefined) {
+      setTmdbQuery(overrideQuery);
     }
 
-    setIsDiscoveringBatch(true);
-    setAiError(null);
-    setBatchCommitNotice(null);
-
-    try {
-      const response = await fetch('/api/admin/discover-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: queryToUse }),
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || `Server error (${response.status}) while discovering movies.`);
-      }
-
-      const parsedArray: any[] = data?.movies;
-      if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
-        throw new Error('Gemini did not return a valid list of movies.');
-      }
-
-      const validated = validateAndPrepareDiscoveredBatch(
-        parsedArray,
-        moviesList,
-        currentUser?.uid || PRIMARY_OWNER_UID
-      );
-
-      setDiscoveredBatch(validated);
-    } catch (err: any) {
-      console.error('Abstract Discovery Error:', err);
-      setAiError(`AI Discovery notice: ${err?.message || 'Failed to generate category batch'}. Please check query or retry.`);
-    } finally {
-      setIsDiscoveringBatch(false);
-    }
-  };
-
-  const handleCommitBatch = async () => {
-    const selectedItems = discoveredBatch.filter(item => item.selected && item.validation.isValid);
-    if (selectedItems.length === 0) {
-      setAiError('Please select at least one verified movie to commit.');
-      return;
-    }
-
-    const activeUser = currentUser || auth.currentUser;
-    if (!activeUser) {
-      setAiError('Authentication required: please sign in as an admin or owner before committing movies to Firestore.');
-      return;
-    }
-
-    setIsCommittingBatch(true);
-    setAiError(null);
-    setBatchCommitNotice(null);
-
-    try {
-      const currentUid = activeUser.uid;
-      const chunkSize = 350;
-
-      for (let i = 0; i < selectedItems.length; i += chunkSize) {
-        const chunk = selectedItems.slice(i, i + chunkSize);
-        const batch = writeBatch(db);
-
-        for (const item of chunk) {
-          const movie = item.movie;
-          const movieRef = doc(db, 'custom_movies', movie.id);
-          const prepared = prepareMovieForFirestore({
-            ...movie,
-            originCountry: ['NG'],
-            source: 'custom',
-            isUserAdded: true,
-            addedByUserId: movie.addedByUserId || currentUid,
-            lastEditedByUserId: currentUid
-          });
-          const payload = stripUndefined({
-            ...prepared,
-            syncedAt: serverTimestamp()
-          });
-          batch.set(movieRef, payload, { merge: true });
-        }
-
-        await batch.commit();
-      }
-
-      setBatchCommitNotice(`Successfully committed ${selectedItems.length} verified Nollywood film(s) to Firestore custom_movies!`);
-
-      // Update state to reflect committed items as already in catalog
-      setDiscoveredBatch(prev => prev.map(item => {
-        if (selectedItems.some(s => s.id === item.id)) {
-          return { ...item, alreadyExists: true, selected: false };
-        }
-        return item;
-      }));
-
-      setTimeout(() => {
-        setBatchCommitNotice(null);
-      }, 5000);
-    } catch (err: any) {
-      handleFirestoreError(err, OperationType.WRITE, 'custom_movies');
-      setAiError(`Failed to commit batch to Firestore: ${err?.message || 'Database error'}`);
-    } finally {
-      setIsCommittingBatch(false);
-    }
-  };
-
-  const handleToggleSelectAll = () => {
-    const hasUnselected = discoveredBatch.some(item => !item.selected && !item.alreadyExists && item.validation.isValid);
-    setDiscoveredBatch(prev => prev.map(item => {
-      if (item.alreadyExists || !item.validation.isValid) return item;
-      return { ...item, selected: hasUnselected };
-    }));
-  };
-
-  const handleToggleItem = (id: string) => {
-    setDiscoveredBatch(prev => prev.map(item => {
-      if (item.id === id) {
-        return { ...item, selected: !item.selected };
-      }
-      return item;
-    }));
-  };
-
-  const handleAiMetadataExtract = async () => {
-    if (!aiTitle.trim()) {
-      setAiError('Please enter at least a movie title.');
-      return;
-    }
-
-    setIsGeneratingAi(true);
-    setAiError(null);
-    setStagedSuccessMessage(null);
-
-    try {
-      const response = await fetch('/api/admin/extract-movie', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: aiTitle.trim(),
-          premise: aiPremise.trim(),
-          year: aiYear.trim(),
-          director: aiDirector.trim(),
-        }),
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.movie) {
-        throw new Error(data?.error || `Server error (${response.status}) during metadata extraction.`);
-      }
-
-      const parsed = data.movie;
-      const sanitized = sanitizeMovie({
-        ...parsed,
-        id: (parsed.title || aiTitle.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-        posterUrl: parsed.posterUrl || VERIFIED_NOLLYWOOD_FALLBACK_POSTER,
-        backdropUrl: parsed.backdropUrl || VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP,
-        source: 'custom',
-        isUserAdded: true,
-        originCountry: ['NG'],
-        addedByUserId: currentUser?.uid || PRIMARY_OWNER_UID
-      });
-
-      setStagedMovie(sanitized);
-    } catch (err: any) {
-      console.error('AI Extraction Error:', err);
-      // Fallback manual structure if AI API has network or key limitations
-      const fallbackYear = parseInt(aiYear) || new Date().getFullYear();
-      const fallbackEra = determineNollywoodEra(fallbackYear);
-      const fallbackMovie: Partial<Movie> = sanitizeMovie({
-        id: aiTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-        title: aiTitle.trim(),
-        tagline: 'An authentic Nigerian Nollywood production.',
-        releaseYear: fallbackYear,
-        director: aiDirector.trim() || 'Renowned Nollywood Director',
-        leadCast: [
-          { actor: 'Lead Nigerian Actor', role: 'Protagonist' }
-        ],
-        genres: ['Drama'],
-        languages: ['English', 'Nigerian Pidgin'],
-        era: fallbackEra,
-        runtimeMinutes: 110,
-        rating: 8.0,
-        ratingCount: 1,
-        synopsis: aiPremise.trim() || `An engaging Nigerian story directed by ${aiDirector.trim() || 'Nollywood filmmakers'}.`,
-        culturalSignificance: 'Showcases contemporary Nigerian storytelling and authentic West African cinematic heritage.',
-        streamingPlatforms: [{ name: 'YouTube', badgeColor: 'bg-red-600' }],
-        posterUrl: VERIFIED_NOLLYWOOD_FALLBACK_POSTER,
-        backdropUrl: VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP,
-        trailerYoutubeId: '',
-        originCountry: ['NG'],
-        source: 'custom',
-        isUserAdded: true,
-        addedByUserId: currentUser?.uid || PRIMARY_OWNER_UID
-      });
-      setStagedMovie(fallbackMovie);
-      setAiError(`Notice: ${err?.message || 'Using archivist structured template with authentic Nigerian tags.'}`);
-    } finally {
-      setIsGeneratingAi(false);
-    }
-  };
-
-  const handleSearchTmdb = async () => {
-    if (!tmdbQuery.trim()) return;
     setIsSearchingTmdb(true);
-    setAiError(null);
+    setSearchError(null);
+    setStagedSuccessMessage(null);
+    setStagedMovie(null);
     setTmdbCandidates([]);
 
     try {
-      const results = await searchMoviesOnline(tmdbQuery.trim());
-      const verified = (results || []).filter(c => isNigerianMovie(c));
-      if (verified.length === 0) {
-        setAiError(`No verified Nigerian Nollywood movies found for "${tmdbQuery.trim()}". Foreign titles are strictly filtered out.`);
+      const results = await searchMoviesOnline(queryToSearch, true);
+      const evaluation = evaluateTmdbSearchResults(queryToSearch, results);
+      if (evaluation.errorMessage) {
+        setSearchError(evaluation.errorMessage);
+        setTmdbCandidates([]);
+        setStagedMovie(null);
       } else {
-        setTmdbCandidates(verified.slice(0, 6));
+        setTmdbCandidates(evaluation.candidates.slice(0, 8));
       }
     } catch (err: any) {
-      setAiError(err?.message || 'Failed to search movie database.');
+      setTmdbCandidates([]);
+      setStagedMovie(null);
+      setSearchError(err?.message || `No verified Nigerian film found for "${queryToSearch}". Failed to query TMDb.`);
     } finally {
       setIsSearchingTmdb(false);
     }
   };
 
   const handleSelectTmdbCandidate = async (cand: WebMovieCandidate) => {
+    if (!hasExplicitNigerianOrigin(cand)) {
+      setStagedMovie(null);
+      setSearchError(`No verified Nigerian film found: "${cand.title}" lacks strict origin_country: ['NG'].`);
+      return;
+    }
+
     setPullingTmdbId(cand.tmdbId);
-    setAiError(null);
+    setSearchError(null);
+    setStagedSuccessMessage(null);
+
     try {
-      const fullMovie = await pullMovieDetailsFromOnline(cand);
-      if (!isNigerianMovie(fullMovie)) {
-        setAiError(`Movie "${fullMovie.title}" rejected: Does not pass Nigerian origin country or Nollywood verification.`);
+      const fullMovie = await pullMovieDetailsFromOnline(cand, true);
+      if (!canSaveVerifiedTmdbMovie(fullMovie)) {
+        setStagedMovie(null);
+        setSearchError(`No verified Nigerian film found: "${fullMovie.title || cand.title}" failed strict origin_country: ['NG'] verification.`);
         return;
       }
       setStagedMovie(fullMovie);
     } catch (err: any) {
-      setAiError(err?.message || 'Could not pull full details.');
+      setStagedMovie(null);
+      setSearchError(err?.message || 'No verified Nigerian film found: could not pull details from TMDb.');
     } finally {
       setPullingTmdbId(null);
     }
   };
 
   const handleSaveStagedMovie = async () => {
-    if (!stagedMovie || !stagedMovie.title || !stagedMovie.id) return;
+    if (!canSaveVerifiedTmdbMovie(stagedMovie, searchError) || !stagedMovie?.title || !stagedMovie?.id) {
+      setSearchError('No verified Nigerian film found. Saving to Firestore is disabled without a verified TMDb match (origin_country: ["NG"]).');
+      return;
+    }
 
-    if (!isNigerianMovie(stagedMovie)) {
-      setAiError('Validation Error: Movie does not pass strict Nigerian origin requirements (must have originCountry: ["NG"]).');
+    const activeUid = currentUser?.uid || auth.currentUser?.uid;
+    if (!activeUid) {
+      setSearchError('Authentication required: please sign in before saving to Firestore.');
+      return;
+    }
+
+    const verifiedCountries = extractOriginCountries(stagedMovie);
+    if (!verifiedCountries.includes('NG')) {
+      setSearchError('Validation Error: Movie does not include explicit originCountry: ["NG"].');
       return;
     }
 
     setIsSavingStaged(true);
-    setAiError(null);
+    setSearchError(null);
     try {
       const movieToSave: Movie = {
         ...(stagedMovie as Movie),
-        addedByUserId: currentUser?.uid || 'admin-portal',
-        originCountry: ['NG'],
+        addedByUserId: activeUid,
+        originCountry: verifiedCountries,
         isUserAdded: true,
-        source: 'custom'
+        source: 'web_pulled'
       };
 
-      await saveFirestoreCustomMovie(movieToSave, currentUser?.uid || undefined);
-      setStagedSuccessMessage(`"${movieToSave.title}" successfully saved to Cloud Firestore catalog!`);
+      await saveFirestoreCustomMovie(movieToSave, activeUid);
+      setStagedSuccessMessage(`"${movieToSave.title}" verified & saved to Cloud Firestore catalog!`);
       setTimeout(() => {
         setStagedSuccessMessage(null);
         setStagedMovie(null);
-        setAiTitle('');
-        setAiPremise('');
       }, 2500);
     } catch (err: any) {
-      setAiError(err?.message || 'Failed to save movie to Firestore.');
+      setSearchError(err?.message || 'Failed to save movie to Firestore.');
     } finally {
       setIsSavingStaged(false);
     }
@@ -639,8 +417,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               : 'bg-slate-900/60 hover:bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-800'
           }`}
         >
-          <Sparkles className="w-4 h-4" />
-          <span>Web & AI Movie Import</span>
+          <Globe className="w-4 h-4" />
+          <span>Online Search (TMDb)</span>
         </button>
 
         <button
@@ -672,462 +450,135 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* ==================================================================== */}
-      {/* TAB A: WEB & AI MOVIE IMPORT */}
+      {/* TAB A: ONLINE SEARCH (TMDB) — SOLE INGESTION ENGINE */}
       {/* ==================================================================== */}
       {activeTab === 'import' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
-            {/* Left: Input Form (AI vs TMDb Mode) */}
+            {/* Left: Online Search (TMDb) Input & Verified Candidates */}
             <div className="lg:col-span-7 bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
               
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    Nollywood Movie Metadata Ingestion
+                    <Globe className="w-4 h-4 text-amber-400" />
+                    Online Search (TMDb)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Extract structured Nigerian metadata via Gemini AI or pull from TMDb with strict origin filtering.
+                    Search verified TMDb records strictly filtered by <code className="text-emerald-400 font-mono">origin_country: ['NG']</code>. Real database matches only.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
-                  <button
-                    onClick={() => { setImportMode('ai'); setAiError(null); }}
-                    className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                      importMode === 'ai' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Gemini AI
-                  </button>
-                  <button
-                    onClick={() => { setImportMode('tmdb'); setAiError(null); }}
-                    className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                      importMode === 'tmdb' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Online Search
-                  </button>
-                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold tracking-wide shrink-0 self-start sm:self-center">
+                  Verified TMDb Only
+                </span>
               </div>
 
-              {aiError && (
-                <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5">
+              {searchError && (
+                <div 
+                  role="alert"
+                  className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5"
+                >
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <span>{aiError}</span>
+                  <span>{searchError}</span>
                 </div>
               )}
 
-              {/* Mode A: Gemini AI Metadata Generator */}
-              {importMode === 'ai' && (
-                <div className="space-y-5">
-                  {/* AI Submode switcher */}
-                  <div className="flex items-center gap-1.5 p-1 bg-slate-950/70 border border-slate-800 rounded-xl">
-                    <button
-                      type="button"
-                      onClick={() => { setAiSubMode('batch'); setAiError(null); }}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        aiSubMode === 'batch' 
-                          ? 'bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950 shadow-md font-extrabold' 
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Layers className="w-3.5 h-3.5" />
-                      <span>Category & Batch Discovery</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setAiSubMode('single'); setAiError(null); }}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        aiSubMode === 'single' 
-                          ? 'bg-slate-800 text-white shadow-md font-extrabold' 
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Film className="w-3.5 h-3.5" />
-                      <span>Single Film Ingestion</span>
-                    </button>
-                  </div>
-
-                  {/* Submode 1: Abstract Category & Batch Discovery */}
-                  {aiSubMode === 'batch' && (
-                    <div className="space-y-4">
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Abstract Category or Prompt</span>
-                            <span className="text-emerald-400">*</span>
-                          </label>
-                          <span className="text-[11px] text-emerald-400 font-mono font-medium">Gemini 2.5 Flash</span>
-                        </div>
-                        <textarea
-                          rows={2}
-                          placeholder="e.g. Top 20 Nollywood box office movies, Classic 90s Yoruba epics, Recent 2025/2026 Nigerian dramas..."
-                          value={abstractPrompt}
-                          onChange={(e) => setAbstractPrompt(e.target.value)}
-                          className="w-full px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
-                        />
-                      </div>
-
-                      {/* Quick Inspiration Presets */}
-                      <div className="space-y-1.5">
-                        <span className="text-[11px] text-slate-400 font-medium">Quick Discovery Topics:</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ABSTRACT_QUERY_PRESETS.map((preset) => (
-                            <button
-                              key={preset}
-                              type="button"
-                              onClick={() => setAbstractPrompt(preset)}
-                              className={`px-2.5 py-1 text-[11px] rounded-lg border transition-all cursor-pointer text-left ${
-                                abstractPrompt === preset
-                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-semibold'
-                                  : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
-                              }`}
-                            >
-                              {preset}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Discover & Batch Import Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleDiscoverBatch()}
-                        disabled={isDiscoveringBatch || !abstractPrompt.trim()}
-                        className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-amber-500 text-slate-950 font-bold rounded-xl shadow-lg hover:brightness-110 active:scale-98 transition-all disabled:opacity-50 cursor-pointer text-sm"
-                      >
-                        {isDiscoveringBatch ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                            <span>Discovering & Validating Nollywood Films with Gemini 2.5 Flash...</span>
-                          </>
-                        ) : (
-                          <>
-                            <DownloadCloud className="w-4 h-4 text-slate-950" />
-                            <span>Discover & Batch Import</span>
-                          </>
-                        )}
-                      </button>
-
-                      {/* Batch Commit Success Notice */}
-                      {batchCommitNotice && (
-                        <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2.5 shadow-md">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                          <span className="font-medium">{batchCommitNotice}</span>
-                        </div>
-                      )}
-
-                      {/* Discovered Batch Preview Checklist */}
-                      {discoveredBatch.length > 0 && (
-                        <div className="space-y-3 pt-3 border-t border-slate-800">
-                          {/* Batch Header Bar */}
-                          <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 px-3.5 py-2.5 rounded-xl border border-slate-800">
-                            <div>
-                              <span className="text-xs font-bold text-white block">
-                                Discovered Batch ({discoveredBatch.length})
-                              </span>
-                              <span className="text-[11px] text-slate-400">
-                                {selectedBatchCount} selected for commit • {alreadyInCatalogBatchCount} already in catalog
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={handleToggleSelectAll}
-                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                            >
-                              {selectedBatchCount === validBatchCount - alreadyInCatalogBatchCount && selectedBatchCount > 0 ? (
-                                <>
-                                  <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
-                                  <span>Deselect All</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Square className="w-3.5 h-3.5 text-slate-400" />
-                                  <span>Select All New</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-
-                          {/* List of Batch Movie Cards */}
-                          <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                            {discoveredBatch.map((item) => {
-                              const m = item.movie;
-                              const isSelectable = !item.alreadyExists && item.validation.isValid;
-                              return (
-                                <div
-                                  key={item.id}
-                                  className={`p-3 rounded-xl border transition-all ${
-                                    item.selected
-                                      ? 'bg-slate-950/90 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/20'
-                                      : item.alreadyExists
-                                      ? 'bg-slate-950/40 border-slate-800/80 opacity-80'
-                                      : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                                  }`}
-                                >
-                                  <div className="flex items-start gap-3">
-                                    {/* Selection Checkbox */}
-                                    <button
-                                      type="button"
-                                      disabled={!isSelectable}
-                                      onClick={() => handleToggleItem(item.id)}
-                                      className="mt-1 shrink-0 cursor-pointer disabled:cursor-not-allowed"
-                                    >
-                                      {item.selected ? (
-                                        <CheckSquare className="w-5 h-5 text-emerald-400" />
-                                      ) : (
-                                        <Square className={`w-5 h-5 ${isSelectable ? 'text-slate-500 hover:text-slate-300' : 'text-slate-700'}`} />
-                                      )}
-                                    </button>
-
-                                    {/* Poster / Thumbnail */}
-                                    <img
-                                      src={m.posterUrl || VERIFIED_NOLLYWOOD_FALLBACK_POSTER}
-                                      alt={m.title}
-                                      className="w-12 h-16 object-cover rounded-lg shrink-0 border border-slate-800 bg-slate-900"
-                                      onError={(e) => {
-                                        (e.target as HTMLImageElement).src = VERIFIED_NOLLYWOOD_FALLBACK_POSTER;
-                                      }}
-                                    />
-
-                                    {/* Movie Info */}
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <h4 className="text-sm font-bold text-white truncate">
-                                          {m.title}
-                                        </h4>
-                                        <span className="text-xs font-semibold text-slate-400 shrink-0">
-                                          {m.releaseYear}
-                                        </span>
-                                      </div>
-
-                                      <p className="text-xs text-slate-400 truncate">
-                                        Dir: <span className="text-slate-300 font-medium">{m.director || 'Nollywood Director'}</span>
-                                      </p>
-
-                                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                          NG Verified
-                                        </span>
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-300">
-                                          {m.era || 'Modern Global Era'}
-                                        </span>
-                                        {item.alreadyExists && (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                                            Already in Catalog
-                                          </span>
-                                        )}
-                                        {item.selected && (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                            Ready to Commit
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {m.synopsis && (
-                                        <p className="text-[11px] text-slate-400 line-clamp-2 mt-1.5 leading-relaxed">
-                                          {m.synopsis}
-                                        </p>
-                                      )}
-                                    </div>
-
-                                    {/* Quick Preview in Inspector */}
-                                    <button
-                                      type="button"
-                                      onClick={() => setStagedMovie(m)}
-                                      title="Inspect Metadata Details"
-                                      className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors shrink-0 cursor-pointer"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Commit Button */}
-                          <div className="pt-2">
-                            <button
-                              type="button"
-                              onClick={handleCommitBatch}
-                              disabled={isCommittingBatch || selectedBatchCount === 0}
-                              className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-amber-500 text-slate-950 font-extrabold rounded-xl shadow-lg hover:brightness-110 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
-                            >
-                              {isCommittingBatch ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                                  <span>Writing {selectedBatchCount} Movies to Firestore custom_movies (writeBatch)...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCheck className="w-4 h-4 text-slate-950" />
-                                  <span>Commit {selectedBatchCount} Verified Film{selectedBatchCount === 1 ? '' : 's'} to Firestore</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Submode 2: Single Film Ingestion */}
-                  {aiSubMode === 'single' && (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                          Movie Title <span className="text-emerald-400">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Seven Doors, Jagun Jagun, Battle on Buka Street..."
-                          value={aiTitle}
-                          onChange={(e) => setAiTitle(e.target.value)}
-                          className="w-full px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                            Release Year (Optional)
-                          </label>
-                          <input
-                            type="number"
-                            placeholder="e.g. 2024"
-                            value={aiYear}
-                            onChange={(e) => setAiYear(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                            Director (Optional)
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Adebayo Tijani, Kunle Afolayan..."
-                            value={aiDirector}
-                            onChange={(e) => setAiDirector(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                          Premise / Story Summary (Optional)
-                        </label>
-                        <textarea
-                          rows={3}
-                          placeholder="Provide brief plot points or keywords to guide Gemini AI in constructing authentic cultural significance and cast details..."
-                          value={aiPremise}
-                          onChange={(e) => setAiPremise(e.target.value)}
-                          className="w-full px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleAiMetadataExtract}
-                        disabled={isGeneratingAi || !aiTitle.trim()}
-                        className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-amber-500 text-slate-950 font-bold rounded-xl shadow-lg hover:brightness-110 active:scale-98 transition-all disabled:opacity-50 cursor-pointer text-sm"
-                      >
-                        {isGeneratingAi ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                            <span>Structuring Metadata with Gemini AI...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-4 h-4 text-slate-950" />
-                            <span>Extract & Structure Nollywood Metadata</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Search Nigerian movie title on TMDb (e.g. Anikulapo, Jagun Jagun)..."
+                    value={tmdbQuery}
+                    onChange={(e) => setTmdbQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearchTmdb()}
+                    className="flex-1 px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSearchTmdb()}
+                    disabled={isSearchingTmdb || !tmdbQuery.trim()}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSearchingTmdb ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    <span>Search</span>
+                  </button>
                 </div>
-              )}
 
-              {/* Mode B: Online TMDb Search */}
-              {importMode === 'tmdb' && (
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Search Nigerian movie title on TMDb..."
-                      value={tmdbQuery}
-                      onChange={(e) => setTmdbQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSearchTmdb()}
-                      className="flex-1 px-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    />
-                    <button
-                      onClick={handleSearchTmdb}
-                      disabled={isSearchingTmdb || !tmdbQuery.trim()}
-                      className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      {isSearchingTmdb ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                      <span>Search</span>
-                    </button>
+                {/* Quick Real-Title TMDb Lookups */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-slate-400 font-medium">Search TMDb Title:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_NIGERIAN_WEB_SUGGESTIONS.slice(0, 8).map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => handleSearchTmdb(suggestion)}
+                        disabled={isSearchingTmdb}
+                        className="px-2.5 py-1 text-[11px] rounded-lg border bg-slate-950/60 text-slate-300 border-slate-800 hover:border-amber-500/50 hover:text-amber-300 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
                   </div>
+                </div>
 
-                  {tmdbCandidates.length > 0 && (
-                    <div className="space-y-2 pt-2">
-                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        Verified Nigerian Candidates ({tmdbCandidates.length})
-                      </p>
-                      <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-                        {tmdbCandidates.map((c) => (
-                          <div 
-                            key={c.tmdbId}
-                            className="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-slate-800 hover:border-slate-700 transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              {c.posterUrl ? (
-                                <img src={c.posterUrl} alt={c.title} className="w-10 h-14 object-cover rounded-lg shrink-0 border border-slate-700" />
-                              ) : (
-                                <div className="w-10 h-14 bg-slate-800 rounded-lg flex items-center justify-center shrink-0">
-                                  <Film className="w-5 h-5 text-slate-500" />
-                                </div>
-                              )}
-                              <div>
-                                <h4 className="text-sm font-bold text-white line-clamp-1">{c.title}</h4>
-                                <p className="text-xs text-slate-400">
-                                  {c.releaseYear} • ⭐ {c.rating ? c.rating.toFixed(1) : 'Unrated'}
-                                </p>
+                {tmdbCandidates.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      Verified Nigerian TMDb Matches ({tmdbCandidates.length})
+                    </p>
+                    <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                      {tmdbCandidates.map((c) => (
+                        <div 
+                          key={c.tmdbId}
+                          className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                            stagedMovie?.tmdbId === c.tmdbId
+                              ? 'bg-slate-950 border-emerald-500/50 ring-1 ring-emerald-500/20'
+                              : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {c.posterUrl ? (
+                              <img src={c.posterUrl} alt={c.title} className="w-10 h-14 object-cover rounded-lg shrink-0 border border-slate-700" />
+                            ) : (
+                              <div className="w-10 h-14 bg-slate-800 rounded-lg flex items-center justify-center shrink-0">
+                                <Film className="w-5 h-5 text-slate-500" />
                               </div>
+                            )}
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-bold text-white line-clamp-1">{c.title}</h4>
+                              <p className="text-xs text-slate-400">
+                                {c.releaseYear} • TMDb #{c.tmdbId} • {c.rating > 0 ? `⭐ ${c.rating.toFixed(1)}` : 'Unrated'}
+                              </p>
                             </div>
-
-                            <button
-                              onClick={() => handleSelectTmdbCandidate(c)}
-                              disabled={pullingTmdbId === c.tmdbId}
-                              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                            >
-                              {pullingTmdbId === c.tmdbId ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Pulling...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Preview</span>
-                                </>
-                              )}
-                            </button>
                           </div>
-                        ))}
-                      </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSelectTmdbCandidate(c)}
+                            disabled={pullingTmdbId === c.tmdbId}
+                            className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                          >
+                            {pullingTmdbId === c.tmdbId ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Pulling...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Preview</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
 
             </div>
 
@@ -1139,9 +590,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <Shield className="w-4 h-4 text-emerald-400" />
                     Metadata & Origin Verification
                   </h3>
-                  {stagedMovie && (
+                  {canSaveStagedMovie && (
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      Ready for Cloud
+                      TMDb Verified NG
                     </span>
                   )}
                 </div>
@@ -1154,108 +605,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 )}
 
                 {!stagedMovie ? (
-                  discoveredBatch.length > 0 ? (
-                    <div className="space-y-4 text-xs">
-                      <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-white text-sm flex items-center gap-2">
-                            <Layers className="w-4 h-4 text-amber-400" />
-                            Batch Audit & Origin Metrics
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                            Strict NG Filter
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
-                          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                            <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">Discovered Films</span>
-                            <span className="text-base font-extrabold text-white mt-0.5 block">
-                              {discoveredBatch.length}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                            <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">Origin Verification</span>
-                            <span className="text-base font-extrabold text-emerald-400 mt-0.5 block flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> 100% NG
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                            <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">Ready to Commit</span>
-                            <span className="text-base font-extrabold text-amber-400 mt-0.5 block">
-                              {selectedBatchCount}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                            <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">In Catalog</span>
-                            <span className="text-base font-extrabold text-sky-400 mt-0.5 block">
-                              {alreadyInCatalogBatchCount}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/20 text-slate-300 space-y-1.5 text-[11px]">
-                          <div className="font-semibold text-emerald-400 flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5" />
-                            <span>Strict Regional Safeguards Active</span>
-                          </div>
-                          <p className="text-slate-400 leading-relaxed text-[10px]">
-                            All discovered films are strictly validated with <code className="text-emerald-300 font-mono">originCountry: ['NG']</code>, sanitized titles, assigned Nollywood historical eras, and authentic directors before atomic batch commit.
-                          </p>
-                        </div>
-
-                        <div className="pt-2">
-                          <button
-                            type="button"
-                            onClick={handleCommitBatch}
-                            disabled={isCommittingBatch || selectedBatchCount === 0}
-                            className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2 hover:brightness-110 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-md"
-                          >
-                            {isCommittingBatch ? (
-                              <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>Committing to Firestore (writeBatch)...</span>
-                              </>
-                            ) : (
-                              <>
-                                <CheckCheck className="w-3.5 h-3.5" />
-                                <span>Commit {selectedBatchCount} Verified Film{selectedBatchCount === 1 ? '' : 's'}</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
+                  <div className="py-16 text-center text-slate-500 space-y-3">
+                    <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
+                      <Film className="w-7 h-7" />
                     </div>
-                  ) : (
-                    <div className="py-16 text-center text-slate-500 space-y-3">
-                      <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
-                        <Film className="w-7 h-7" />
-                      </div>
-                      <p className="text-sm font-medium">No movie staged yet</p>
-                      <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                        Use Category &amp; Batch Discovery or Single Film Ingestion on the left to extract structured Nollywood metadata.
-                      </p>
-                    </div>
-                  )
+                    <p className="text-sm font-medium text-slate-300">
+                      {searchError ? 'No verified Nigerian film found' : 'No verified TMDb match staged'}
+                    </p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                      {searchError
+                        ? 'Saving to Firestore is disabled until a real Nigerian film (origin_country: ["NG"]) is found and previewed from TMDb.'
+                        : 'Search TMDb on the left and click Preview on a verified Nigerian match to inspect real database metadata.'}
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-4 text-xs">
                     {/* Visual Asset Preview */}
-                    <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-950 border border-slate-800 group">
-                      <img 
-                        src={stagedMovie.backdropUrl || stagedMovie.posterUrl || VERIFIED_NOLLYWOOD_FALLBACK_BACKDROP} 
-                        alt={stagedMovie.title}
-                        className="w-full h-full object-cover" 
-                      />
+                    <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-950 border border-slate-800 group flex items-center justify-center">
+                      {stagedMovie.backdropUrl || stagedMovie.posterUrl ? (
+                        <img 
+                          src={stagedMovie.backdropUrl || stagedMovie.posterUrl} 
+                          alt={stagedMovie.title}
+                          className="w-full h-full object-cover" 
+                        />
+                      ) : (
+                        <Film className="w-10 h-10 text-slate-700" />
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent p-3 flex flex-col justify-end">
                         <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">
-                          {stagedMovie.era}
+                          {stagedMovie.era} • TMDb #{stagedMovie.tmdbId}
                         </span>
                         <h4 className="text-base font-cinema font-bold text-white">
                           {stagedMovie.title} ({stagedMovie.releaseYear})
                         </h4>
-                        <p className="text-[11px] text-slate-300 line-clamp-1 italic">
-                          "{stagedMovie.tagline}"
-                        </p>
+                        {stagedMovie.tagline && (
+                          <p className="text-[11px] text-slate-300 line-clamp-1 italic">
+                            "{stagedMovie.tagline}"
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -1264,73 +651,70 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                         <span className="text-slate-500 block">Origin:</span>
                         <span className="font-bold text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" /> Nigeria (NG)
+                          <CheckCircle2 className="w-3 h-3" /> {(stagedMovie.originCountry || []).join(', ')}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                         <span className="text-slate-500 block">Director:</span>
                         <span className="font-bold text-slate-200 truncate block">
-                          {stagedMovie.director || 'N/A'}
+                          {stagedMovie.director || 'Not listed on TMDb'}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                         <span className="text-slate-500 block">Languages:</span>
                         <span className="font-bold text-slate-200 truncate block">
-                          {stagedMovie.languages?.join(', ') || 'English'}
+                          {stagedMovie.languages?.join(', ') || 'Not listed'}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                         <span className="text-slate-500 block">Lead Cast:</span>
                         <span className="font-bold text-slate-200 truncate block">
-                          {stagedMovie.leadCast?.map(c => c.actor).slice(0, 2).join(', ') || 'N/A'}
+                          {stagedMovie.leadCast && stagedMovie.leadCast.length > 0
+                            ? stagedMovie.leadCast.map(c => c.actor).slice(0, 2).join(', ')
+                            : 'Not listed on TMDb'}
                         </span>
                       </div>
                     </div>
 
                     <div>
                       <span className="text-slate-500 block mb-1">Synopsis:</span>
-                      <p className="text-slate-300 leading-relaxed line-clamp-3">
-                        {stagedMovie.synopsis}
-                      </p>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-500 block mb-1">Cultural Significance:</span>
-                      <p className="text-amber-300/90 leading-relaxed line-clamp-2">
-                        {stagedMovie.culturalSignificance}
+                      <p className="text-slate-300 leading-relaxed line-clamp-4">
+                        {stagedMovie.synopsis || 'No synopsis returned from TMDb.'}
                       </p>
                     </div>
                   </div>
                 )}
               </div>
 
-              {stagedMovie && (
-                <div className="pt-4 border-t border-slate-800 mt-4 flex items-center gap-3">
+              <div className="pt-4 border-t border-slate-800 mt-4 flex items-center gap-3">
+                {stagedMovie && (
                   <button
+                    type="button"
                     onClick={() => setStagedMovie(null)}
                     className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
                   >
-                    {discoveredBatch.length > 0 ? 'Back to Batch' : 'Discard'}
+                    Discard
                   </button>
-                  <button
-                    onClick={handleSaveStagedMovie}
-                    disabled={isSavingStaged}
-                    className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2 hover:brightness-110 active:scale-98 transition-all disabled:opacity-50 cursor-pointer shadow-md"
-                  >
-                    {isSavingStaged ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Saving to Cloud...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Save to Cloud Catalog</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
+                )}
+                <button
+                  type="button"
+                  onClick={handleSaveStagedMovie}
+                  disabled={!canSaveStagedMovie || isSavingStaged}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-amber-500 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2 hover:brightness-110 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-md"
+                >
+                  {isSavingStaged ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving to Cloud...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Save to Cloud Catalog</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
           </div>
