@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import http from 'http';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,9 +9,11 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_HMR_DISABLED = process.env.DISABLE_HMR === 'true';
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   app.use(express.json({ limit: '1mb' }));
 
   // =========================================================================
@@ -19,7 +22,32 @@ async function startServer() {
   if (!IS_PRODUCTION) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      plugins: IS_HMR_DISABLED
+        ? [
+            {
+              name: 'disable-vite-client-ws-connect',
+              enforce: 'post',
+              transform(code, id) {
+                if (
+                  id.endsWith('/vite/dist/client/client.mjs') ||
+                  code.includes('transport.connect(createHMRHandler(handleMessage))')
+                ) {
+                  return code.replace(
+                    'transport.connect(createHMRHandler(handleMessage));',
+                    '/* WebSocket HMR transport disabled via DISABLE_HMR=true */'
+                  );
+                }
+              },
+            },
+          ]
+        : [],
+      server: IS_HMR_DISABLED
+        ? { middlewareMode: true, hmr: false, ws: false }
+        : {
+            middlewareMode: true,
+            hmr: { server: httpServer },
+            ws: { server: httpServer },
+          },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -31,7 +59,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`NaijaReel server listening on http://0.0.0.0:${PORT}`);
   });
 }
