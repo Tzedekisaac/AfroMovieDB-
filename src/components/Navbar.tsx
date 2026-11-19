@@ -2,7 +2,7 @@ import React from 'react';
 import { Film, Bookmark, Sparkles, Search, X, Award, Flame, Plus, User as UserIcon, LogIn, Shield } from 'lucide-react';
 import { FilterState, AppTheme, UserRole } from '../types';
 import { User } from 'firebase/auth';
-import { isUserOwner } from '../lib/firestoreService';
+import { isUserModeratorOrHigher } from '../lib/adminConfig';
 
 interface NavbarProps {
   filterState: FilterState;
@@ -221,7 +221,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs sm:px-3 sm:text-xs font-bold rounded-full border transition-all cursor-pointer shadow-sm ${
                   currentView === 'admin'
                     ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-400 shadow-md shadow-purple-950/40'
-                    : isUserOwner(currentUser) || userRole === 'admin' || userRole === 'owner' || userRole === 'moderator'
+                    : isUserModeratorOrHigher({ role: userRole }, currentUser)
                       ? 'bg-purple-950/40 hover:bg-purple-900/60 border-purple-500/40 text-purple-300 hover:text-white'
                       : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-slate-200'
                 }`}

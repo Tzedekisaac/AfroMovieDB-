@@ -1,9 +1,15 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import {
   subscribeToUserData,
   saveUserWatchlist,
+  saveUserTrackingList,
+  saveUserApiKey,
+  removeUserApiKey,
+  saveUserTheme,
+  saveCustomList,
+  deleteCustomList,
   subscribeToUserCustomLists,
   purgeNonNigerianMoviesFromFirestore,
   syncUserProfileOnLogin,
@@ -11,10 +17,21 @@ import {
   isUserAdminOrOwner
 } from '../lib/firestoreService';
 import { setCustomTmdbKey } from '../utils/api';
-import type { UserTrackedItem, AppTheme, CustomUserList, AppUserProfile } from '../types';
+import type {
+  UserTrackedItem,
+  MovieWatchStatus,
+  AppTheme,
+  CustomUserList,
+  AppUserProfile
+} from '../types';
 
 const WATCHLIST_STORAGE_KEY = 'afromoviedb_watchlist_ids_v1';
 const TRACKING_STORAGE_KEY = 'afromoviedb_tracking_list_v1';
+
+export interface UseUserSessionOptions {
+  onSyncNotice?: (message: string | null, durationMs?: number) => void;
+  onRequireAuth?: () => void;
+}
 
 export interface UseUserSessionResult {
   user: User | null;
@@ -25,6 +42,7 @@ export interface UseUserSessionResult {
   setWatchlistIds: React.Dispatch<React.SetStateAction<string[]>>;
   trackingList: UserTrackedItem[];
   setTrackingList: React.Dispatch<React.SetStateAction<UserTrackedItem[]>>;
+  trackingMap: Map<string, UserTrackedItem>;
   customTmdbApiKey: string | undefined;
   setCustomTmdbApiKey: React.Dispatch<React.SetStateAction<string | undefined>>;
   activeTheme: AppTheme;
@@ -32,9 +50,20 @@ export interface UseUserSessionResult {
   userCustomLists: CustomUserList[];
   setUserCustomLists: React.Dispatch<React.SetStateAction<CustomUserList[]>>;
   signOutUser: () => Promise<void>;
+  updateTrackingStatus: (movieId: string, status: MovieWatchStatus | null) => Promise<void>;
+  updateRewatchCount: (movieId: string, count: number) => Promise<void>;
+  toggleWatchlist: (movieId: string) => void;
+  clearWatchlist: () => void;
+  saveApiKey: (apiKey: string) => Promise<void>;
+  removeApiKey: () => Promise<void>;
+  selectTheme: (newTheme: AppTheme) => Promise<void>;
+  saveUserCustomList: (list: CustomUserList) => Promise<void>;
+  deleteUserCustomList: (listId: string, onDeleted?: () => void) => Promise<void>;
 }
 
-export function useUserSession(): UseUserSessionResult {
+export function useUserSession(options: UseUserSessionOptions = {}): UseUserSessionResult {
+  const { onSyncNotice, onRequireAuth } = options;
+
   // Auth & profile state
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<AppUserProfile | null>(null);
@@ -79,6 +108,17 @@ export function useUserSession(): UseUserSessionResult {
 
   // Custom Curated User Lists
   const [userCustomLists, setUserCustomLists] = useState<CustomUserList[]>([]);
+
+  const onSyncNoticeRef = useRef(onSyncNotice);
+  onSyncNoticeRef.current = onSyncNotice;
+  const onRequireAuthRef = useRef(onRequireAuth);
+  onRequireAuthRef.current = onRequireAuth;
+  const userRef = useRef(user);
+  userRef.current = user;
+  const trackingListRef = useRef(trackingList);
+  trackingListRef.current = trackingList;
+  const watchlistIdsRef = useRef(watchlistIds);
+  watchlistIdsRef.current = watchlistIds;
 
   // Listen to Firebase Auth state & sync profile / role
   useEffect(() => {
@@ -181,6 +221,16 @@ export function useUserSession(): UseUserSessionResult {
     }
   }, [watchlistIds, user]);
 
+  // Fast status lookup map for catalogue cards
+  const trackingMap = useMemo(() => {
+    const map = new Map<string, UserTrackedItem>();
+    trackingList.forEach((item) => map.set(item.movieId, item));
+    return map;
+  }, [trackingList]);
+
+  const trackingMapRef = useRef(trackingMap);
+  trackingMapRef.current = trackingMap;
+
   const isAdmin = useMemo(
     () => isUserAdminOrOwner(userProfile, user),
     [userProfile, user]
@@ -194,6 +244,192 @@ export function useUserSession(): UseUserSessionResult {
     }
   }, []);
 
+  // Update multi-status tracking (Plan to Watch, Watching, Completed, On Hold, Dropped, or un-track)
+  const updateTrackingStatus = useCallback(
+    async (movieId: string, status: MovieWatchStatus | null) => {
+      const currentUser = userRef.current;
+      if (!currentUser) {
+        onRequireAuthRef.current?.();
+        return;
+      }
+
+      const currentTracking = trackingListRef.current;
+      let updatedList: UserTrackedItem[];
+
+      if (!status) {
+        updatedList = currentTracking.filter((t) => t.movieId !== movieId);
+        setWatchlistIds((prev) => prev.filter((id) => id !== movieId));
+      } else {
+        const existing = currentTracking.find((t) => t.movieId === movieId);
+        if (existing) {
+          updatedList = currentTracking.map((t) =>
+            t.movieId === movieId
+              ? { ...t, status, updatedAt: new Date().toISOString() }
+              : t
+          );
+        } else {
+          updatedList = [
+            ...currentTracking,
+            {
+              movieId,
+              status,
+              rewatchCount: 0,
+              updatedAt: new Date().toISOString(),
+            },
+          ];
+        }
+        // Keep watchlistIds synced for backward compatibility
+        setWatchlistIds((prev) => (prev.includes(movieId) ? prev : [...prev, movieId]));
+      }
+
+      setTrackingList(updatedList);
+      try {
+        localStorage.setItem(TRACKING_STORAGE_KEY, JSON.stringify(updatedList));
+      } catch (e) {
+        console.warn('Failed to cache tracking list locally:', e);
+      }
+
+      try {
+        await saveUserTrackingList(currentUser.uid, updatedList);
+      } catch (err) {
+        console.warn('Failed to sync tracking list to Firestore:', err);
+      }
+    },
+    []
+  );
+
+  // Rewatch counter updater for completed films
+  const updateRewatchCount = useCallback(async (movieId: string, count: number) => {
+    const safeCount = Math.max(0, count);
+    const updatedList = trackingListRef.current.map((t) =>
+      t.movieId === movieId
+        ? { ...t, rewatchCount: safeCount, updatedAt: new Date().toISOString() }
+        : t
+    );
+
+    setTrackingList(updatedList);
+    try {
+      localStorage.setItem(TRACKING_STORAGE_KEY, JSON.stringify(updatedList));
+    } catch (e) {
+      console.warn('Failed to cache tracking list locally:', e);
+    }
+
+    const currentUser = userRef.current;
+    if (currentUser) {
+      try {
+        await saveUserTrackingList(currentUser.uid, updatedList);
+      } catch (err) {
+        console.warn('Failed to sync rewatch count to Firestore:', err);
+      }
+    }
+  }, []);
+
+  // Toggle watchlist (Auth-gated)
+  const toggleWatchlist = useCallback(
+    (movieId: string) => {
+      if (!userRef.current) {
+        onRequireAuthRef.current?.();
+        return;
+      }
+      const isCurrentlyTracked =
+        watchlistIdsRef.current.includes(movieId) || trackingMapRef.current.has(movieId);
+      if (isCurrentlyTracked) {
+        updateTrackingStatus(movieId, null);
+      } else {
+        updateTrackingStatus(movieId, 'plan_to_watch');
+      }
+    },
+    [updateTrackingStatus]
+  );
+
+  const clearWatchlist = useCallback(() => {
+    setWatchlistIds([]);
+  }, []);
+
+  // Save personal external API key (TMDb) to user profile in Firestore
+  const saveApiKey = useCallback(async (apiKey: string) => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+    try {
+      await saveUserApiKey(currentUser.uid, apiKey);
+      setCustomTmdbApiKey(apiKey);
+      setCustomTmdbKey(apiKey);
+      onSyncNoticeRef.current?.('Custom TMDb API Key saved securely to your profile!', 4500);
+    } catch (err) {
+      console.error('Failed to save API key to Firestore:', err);
+      throw err;
+    }
+  }, []);
+
+  // Remove personal external API key from user profile in Firestore
+  const removeApiKey = useCallback(async () => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+    try {
+      await removeUserApiKey(currentUser.uid);
+      setCustomTmdbApiKey(undefined);
+      setCustomTmdbKey(null);
+      onSyncNoticeRef.current?.('Custom TMDb API Key removed. Reverted to shared key.', 4500);
+    } catch (err) {
+      console.error('Failed to remove API key from Firestore:', err);
+      throw err;
+    }
+  }, []);
+
+  // Theme switch handler with immediate UI persistence & Firestore sync
+  const selectTheme = useCallback(async (newTheme: AppTheme) => {
+    setActiveTheme(newTheme);
+    try {
+      localStorage.setItem('afromoviedb_theme_v1', newTheme);
+    } catch {}
+
+    const currentUser = userRef.current;
+    if (currentUser) {
+      try {
+        await saveUserTheme(currentUser.uid, newTheme);
+      } catch (err) {
+        console.warn('Failed to sync theme preference to Firestore:', err);
+      }
+    }
+
+    const themeName =
+      newTheme === 'emerald'
+        ? 'Nigerian Emerald'
+        : newTheme === 'gold'
+          ? 'Royal Gold'
+          : 'Deep Obsidian';
+    onSyncNoticeRef.current?.(`Switched theme to ${themeName}!`, 3000);
+  }, []);
+
+  // Save / Update custom themed collection in Firestore
+  const saveUserCustomList = useCallback(async (list: CustomUserList) => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+    try {
+      await saveCustomList(list, currentUser.uid);
+      setUserCustomLists((prev) => {
+        const filtered = prev.filter((l) => l.id !== list.id);
+        return [list, ...filtered];
+      });
+      onSyncNoticeRef.current?.(`Collection "${list.title}" published successfully!`, 4500);
+    } catch (err) {
+      console.error('Failed to save custom collection:', err);
+      throw err;
+    }
+  }, []);
+
+  // Delete custom collection from Firestore
+  const deleteUserCustomList = useCallback(async (listId: string, onDeleted?: () => void) => {
+    try {
+      await deleteCustomList(listId);
+      setUserCustomLists((prev) => prev.filter((l) => l.id !== listId));
+      onDeleted?.();
+      onSyncNoticeRef.current?.('Collection removed.', 3500);
+    } catch (err) {
+      console.error('Failed to delete custom collection:', err);
+    }
+  }, []);
+
   return {
     user,
     userProfile,
@@ -203,12 +439,23 @@ export function useUserSession(): UseUserSessionResult {
     setWatchlistIds,
     trackingList,
     setTrackingList,
+    trackingMap,
     customTmdbApiKey,
     setCustomTmdbApiKey,
     activeTheme,
     setActiveTheme,
     userCustomLists,
     setUserCustomLists,
-    signOutUser
+    signOutUser,
+    updateTrackingStatus,
+    updateRewatchCount,
+    toggleWatchlist,
+    clearWatchlist,
+    saveApiKey,
+    removeApiKey,
+    selectTheme,
+    saveUserCustomList,
+    deleteUserCustomList
   };
 }
+

@@ -1,62 +1,23 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  saveUserTrackingList,
-  saveUserApiKey,
-  removeUserApiKey,
-  saveUserTheme,
-  getCustomListById,
-  saveCustomList,
-  deleteCustomList,
-  subscribeToReviews, 
-  addFirestoreReview, 
-  deleteFirestoreReview,
-  subscribeToCustomMovies, 
-  saveFirestoreCustomMovie, 
-  saveMultipleFirestoreMovies,
-  updateFirestoreMovie
-} from './lib/firestoreService';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useUserSession } from './hooks/useUserSession';
-import { isNigerianMovie } from './utils/nigerianMovieValidator';
-import { 
-  bulkSyncNigerianNewReleases, 
-  checkAndRunDailySync,
-  runDeepHistoricalSweep,
-  setCustomTmdbKey,
-  pullMovieDetailsFromOnline,
-  HistoricalSweepProgress,
-  sanitizeMovie
-} from './utils/api';
-import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
-import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
-import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
-import { sanitizeAndAlignMovieMetadata } from './utils/validation';
+import { useMovieCatalog } from './hooks/useMovieCatalog';
+import { useModalRouter } from './hooks/useModalRouter';
+import type { Movie } from './types';
 import { Navbar } from './components/Navbar';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { CatalogueFilters } from './components/CatalogueFilters';
-import { MovieCard } from './components/MovieCard';
 import { MovieGrid } from './components/MovieGrid';
-import { MovieDetailModal } from './components/MovieDetailModal';
-import { EditMovieModal } from './components/EditMovieModal';
-import { TrailerModal } from './components/TrailerModal';
-import { WatchlistModal } from './components/WatchlistModal';
-import { HeritageModal } from './components/HeritageModal';
-import { AddMovieModal } from './components/AddMovieModal';
-import { AuthModal } from './components/AuthModal';
 import { UserProfilePage } from './components/UserProfilePage';
 import { StandaloneListView } from './components/StandaloneListView';
-import { CustomListModal } from './components/CustomListModal';
 import { HistoricalSweepPill } from './components/HistoricalSweepPill';
 import { AdminRoute } from './components/AdminRoute';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Footer } from './components/Footer';
-import { SiteInfoModal, type SiteInfoPage } from './components/SiteInfoModal';
-import { 
-  Sparkles, Flame, Award, Film, Bookmark, 
-  RotateCcw, SlidersHorizontal, Search, Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown, ArrowUp 
+import { AppModals } from './components/AppModals';
+import {
+  Sparkles, Flame, Award, Film,
+  Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown, ArrowUp
 } from 'lucide-react';
-
-const TRACKING_STORAGE_KEY = 'afromoviedb_tracking_list_v1';
-const REVIEWS_STORAGE_KEY = 'afromoviedb_user_reviews_v1';
 
 export default function App() {
   // Navigation View State: 'catalogue', 'profile', or 'admin' command center
@@ -70,10 +31,12 @@ export default function App() {
   });
 
   // Synchronize browser history / URL path when switching views
+  const closeListRef = useRef<() => void>(() => {});
+  const openAuthRef = useRef<() => void>(() => {});
   const navigateToView = (view: 'catalogue' | 'profile' | 'admin') => {
     setCurrentView(view);
     if (view === 'catalogue') {
-      setActiveStandaloneList(null);
+      closeListRef.current();
     }
     try {
       const targetPath = view === 'admin' ? '/admin' : view === 'profile' ? '/profile' : '/';
@@ -100,65 +63,48 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Auth, user profile, and user data session hook
+  // Sync notification banner state
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const showSyncNotice = useCallback((message: string | null, durationMs?: number) => {
+    setSyncNotice(message);
+    if (message && durationMs) {
+      window.setTimeout(() => {
+        setSyncNotice((curr) => (curr === message ? null : curr));
+      }, durationMs);
+    }
+  }, []);
+
+  // Auth, user profile, preferences, and tracking session hook
   const {
     user: currentUser,
     userProfile: currentUserProfile,
     isAdmin,
     loadingAuth,
     watchlistIds,
-    setWatchlistIds,
     trackingList,
-    setTrackingList,
+    trackingMap,
     customTmdbApiKey,
-    setCustomTmdbApiKey,
     activeTheme,
-    setActiveTheme,
     userCustomLists,
-    setUserCustomLists,
-    signOutUser: handleSignOut
-  } = useUserSession();
-  const isAuthReady = !loadingAuth;
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
-
-  // Catalog state is populated exclusively from the Firestore custom_movies snapshot.
-  const [isCatalogReady, setIsCatalogReady] = useState(false);
-  const [isCatalogInitializationComplete, setIsCatalogInitializationComplete] = useState(false);
-  const [catalogLoadError, setCatalogLoadError] = useState<string | null>(null);
-
-  // Bulk sync state
-  const [isSyncingReleases, setIsSyncingReleases] = useState(false);
-  const [syncNotice, setSyncNotice] = useState<string | null>(null);
-
-  // Master catalog: Firestore is the source of truth; the curated starter list is seeded there once.
-  const [moviesList, setMoviesList] = useState<Movie[]>([]);
-
-  // Filters State
-  const [filterState, setFilterState] = useState<FilterState>({
-    searchQuery: '',
-    selectedGenre: 'All',
-    selectedLanguage: 'All',
-    selectedEra: 'All',
-    selectedPlatform: 'All',
-    sortBy: 'rating',
-    watchlistOnly: false
+    signOutUser: handleSignOut,
+    updateTrackingStatus: handleUpdateTrackingStatus,
+    updateRewatchCount: handleUpdateRewatchCount,
+    toggleWatchlist: handleToggleWatchlist,
+    clearWatchlist: handleClearWatchlist,
+    saveApiKey: handleSaveApiKey,
+    removeApiKey: handleRemoveApiKey,
+    selectTheme: handleSelectTheme,
+    saveUserCustomList: handleSaveCustomList,
+    deleteUserCustomList
+  } = useUserSession({
+    onSyncNotice: showSyncNotice,
+    onRequireAuth: () => openAuthRef.current()
   });
 
+  // Layout UI states
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
-
-  // Custom Curated User List modals
-  const [activeStandaloneList, setActiveStandaloneList] = useState<CustomUserList | null>(null);
-  const [isCustomListModalOpen, setIsCustomListModalOpen] = useState(false);
-  const [editingCustomList, setEditingCustomList] = useState<CustomUserList | null>(null);
-
-  // Deep Historical Archive Sweep state
-  const [isSweeping, setIsSweeping] = useState(false);
-  const [isFinishingSweep, setIsFinishingSweep] = useState(false);
-  const [sweepProgress, setSweepProgress] = useState<HistoricalSweepProgress | null>(null);
   const [showSweepPill, setShowSweepPill] = useState(true);
   const [showBackToTop, setShowBackToTop] = useState(false);
-  const sweepAbortController = useRef<AbortController | null>(null);
-  const dailySyncStarted = useRef(false);
 
   // Scroll listener to toggle floating 'Back to Top' button when scrolled past the first batch of movies
   useEffect(() => {
@@ -183,828 +129,105 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // User reviews state (loaded from Firestore/localStorage)
-  const [reviews, setReviews] = useState<UserReview[]>(() => {
-    try {
-      const saved = localStorage.getItem(REVIEWS_STORAGE_KEY) || localStorage.getItem('naijareel_user_reviews_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return [];
+  // Movie catalog data layer hook (Firestore snapshots, reviews, filtering, sorting, pagination, sync & sweep)
+  const {
+    movies,
+    loadingMovies,
+    catalogLoadError,
+    filteredMovies,
+    displayedMovies,
+    featuredMovies,
+    hasMore,
+    loadMore,
+    remainingCount,
+    batchSize,
+    filterState,
+    setFilterState,
+    resetFilters,
+    activeCollection,
+    handleCollectionSelect,
+    isSyncingReleases,
+    reviews,
+    addReview: handleAddReview,
+    deleteReview: handleDeleteReview,
+    publishMovie,
+    updateMovie,
+    isSweeping,
+    isFinishingSweep,
+    sweepProgress,
+    triggerHistoricalSweep,
+    finishHistoricalSweep: handleFinishHistoricalSweep
+  } = useMovieCatalog({
+    currentUser,
+    isAuthReady: !loadingAuth,
+    watchlistIds,
+    trackingMap,
+    onSyncNotice: showSyncNotice
   });
 
-  // Modal states
-  const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
-  const [trailerMovie, setTrailerMovie] = useState<Movie | null>(null);
-  const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
-  const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
-  const [isHeritageOpen, setIsHeritageOpen] = useState(false);
-  const [isAutoPullOpen, setIsAutoPullOpen] = useState(false);
-  const [activeSiteInfoPage, setActiveSiteInfoPage] = useState<SiteInfoPage | null>(null);
+  // URL deep-linking (?movie=, ?list=) & modal visibility router hook
+  const modalRouter = useModalRouter({
+    movies,
+    userCustomLists
+  });
 
-  // Quick collections shortcut selection
-  const [activeCollection, setActiveCollection] = useState<string>('all');
+  const {
+    selectedMovie,
+    setSelectedMovie,
+    openMovie,
+    trailerMovie,
+    setTrailerMovie,
+    openTrailer,
+    openEditMovie,
+    openWatchlist,
+    openHeritage,
+    openAddMovie,
+    openAuth,
+    activeStandaloneList,
+    openList,
+    closeList,
+    openCustomList,
+    openSiteInfo
+  } = modalRouter;
 
+  closeListRef.current = closeList;
+  openAuthRef.current = openAuth;
 
-
-  // Listen to Firestore Real-time Reviews
-  useEffect(() => {
-    const unsubscribe = subscribeToReviews((cloudReviews) => {
-      setReviews(cloudReviews || []);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Listen to Firestore Real-time Custom Movies (the exclusive single source of truth for the displayed catalog).
-  useEffect(() => {
-    let isMounted = true;
-    const snapshotTimeout = window.setTimeout(() => {
-      if (!isMounted) return;
-      setMoviesList(curr => {
-        if (curr.length === 0) {
-          setCatalogLoadError('Firestore has not returned a live catalog snapshot. Enable Cloud Firestore for the selected Firebase project and check its database access rules.');
-        }
-        return curr;
-      });
-      setIsCatalogReady(true);
-      setIsCatalogInitializationComplete(true);
-    }, 15000);
-
-    const unsubscribe = subscribeToCustomMovies((cloudMovies, fromCache) => {
-      // Direct rendering of verified Nigerian Firestore documents with safe fallbacks and aligned visual assets
-      const sanitizedCloud = (cloudMovies || [])
-        .filter((movie) => {
-          const normTitle = String(movie?.title || '').toLowerCase().trim();
-          const normDirector = String(movie?.director || '').toLowerCase().trim();
-          if (normTitle.includes('call me') || normDirector.includes('arek zasowski')) return false;
-          return isNigerianMovie(movie);
-        })
-        .map((movie) => 
-          sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(sanitizeMovie(movie)) as Movie)
-        );
-      setMoviesList(sanitizedCloud);
-      if (sanitizedCloud.length > 0 || !fromCache) {
-        window.clearTimeout(snapshotTimeout);
-        setIsCatalogReady(true);
-        setIsCatalogInitializationComplete(true);
-        setCatalogLoadError(null);
-      }
-
-      // Immediately propagate updated movie documents to any open modals in real time
-      setSelectedMovie(curr => {
-        if (!curr) return null;
-        const match = sanitizedCloud.find(m => m.id === curr.id);
-        return match || curr;
-      });
-
-      setEditingMovie(curr => {
-        if (!curr) return null;
-        const match = sanitizedCloud.find(m => m.id === curr.id);
-        return match || curr;
-      });
-
-      setTrailerMovie(curr => {
-        if (!curr) return null;
-        const match = sanitizedCloud.find(m => m.id === curr.id);
-        return match || curr;
-      });
-    }, (error) => {
-      window.clearTimeout(snapshotTimeout);
-      setMoviesList(curr => {
-        if (curr.length === 0) {
-          setCatalogLoadError(error.message || 'Could not connect to the Firestore movie catalog.');
-        }
-        return curr;
-      });
-      setIsCatalogReady(true);
-      setIsCatalogInitializationComplete(true);
-    });
-
-    return () => {
-      isMounted = false;
-      window.clearTimeout(snapshotTimeout);
-      unsubscribe();
-    };
-  }, []);
-
-  // Add auto-pulled or manually created movie handler - Direct Global Firestore Sync
+  // UI modal coordinators delegating persistence to useMovieCatalog & useUserSession
   const handleMoviePulled = async (newMovie: Movie) => {
-    const movieWithDefaultCollection = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(newMovie) as Movie);
-    // Direct real-time write to Firebase Firestore custom_movies collection
-    try {
-      await saveFirestoreCustomMovie(movieWithDefaultCollection, currentUser?.uid || 'community-contributor');
-      setSyncNotice(`"${movieWithDefaultCollection.title}" published to global Nollywood catalogue!`);
-      setTimeout(() => setSyncNotice(null), 4500);
-    } catch (err) {
-      console.error('Could not sync movie to Firestore:', err);
-      setSyncNotice(`Failed to publish "${movieWithDefaultCollection.title}" to Firestore.`);
-      setTimeout(() => setSyncNotice(null), 4500);
-    }
-
-    // Auto select the new movie to show details
-    setSelectedMovie(movieWithDefaultCollection);
+    const savedMovie = await publishMovie(newMovie);
+    setSelectedMovie(savedMovie);
   };
 
-  // Update movie details handler (saves directly to Firebase Firestore with real-time UI synchronization)
   const handleUpdateMovie = async (updatedMovie: Movie) => {
-    const safeUpdatedMovie = sanitizeAndAlignMovieMetadata(sanitizeAndTagMovie(updatedMovie) as Movie);
-    // Synchronize selected movie modal & trailer modal in real time
-    if (selectedMovie?.id === safeUpdatedMovie.id) {
-      setSelectedMovie(safeUpdatedMovie);
-    }
-    if (trailerMovie?.id === safeUpdatedMovie.id) {
-      setTrailerMovie(safeUpdatedMovie);
-    }
-
-    // Direct write to Firebase Firestore custom_movies
-    try {
-      await updateFirestoreMovie(safeUpdatedMovie, currentUser?.uid || 'community-editor');
-      setSyncNotice(`Updated "${safeUpdatedMovie.title}" and saved to Firebase Firestore!`);
-      setTimeout(() => setSyncNotice(null), 4500);
-    } catch (err) {
-      console.error('Error saving movie updates to Firestore:', err);
-      throw err;
-    }
-  };
-
-
-
-  // Check URL query parameter (?movie=id) to auto-open shared film link
-  useEffect(() => {
-    let isCancelled = false;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const sharedMovieId = params.get('movie');
-      if (sharedMovieId) {
-        const found = moviesList.find(m => m.id === sharedMovieId);
-        if (found) {
-          setSelectedMovie(found);
-        } else {
-          // If the shared link references an online TMDb ID, resolve it automatically
-          const tmdbIdNum = parseInt(sharedMovieId.replace(/^tmdb-/, ''), 10);
-          if (!isNaN(tmdbIdNum) && tmdbIdNum > 0) {
-            pullMovieDetailsFromOnline({
-              tmdbId: tmdbIdNum,
-              title: 'Nollywood Film',
-              releaseYear: new Date().getFullYear(),
-              overview: '',
-              posterUrl: '',
-              backdropUrl: '',
-              rating: 8.0,
-              ratingCount: 10,
-              genreIds: [],
-              popularity: 1
-            }).then(async loadedMovie => {
-              if (!isCancelled && loadedMovie) {
-                const safeMovie = sanitizeAndTagMovie(loadedMovie) as Movie;
-                await saveFirestoreCustomMovie(safeMovie);
-                if (!isCancelled) setSelectedMovie(safeMovie);
-              }
-            }).catch(e => console.warn('Could not auto-resolve shared online movie', e));
-          }
-        }
+    await updateMovie(updatedMovie, (safeUpdatedMovie) => {
+      if (selectedMovie?.id === safeUpdatedMovie.id) {
+        setSelectedMovie(safeUpdatedMovie);
       }
-    } catch (e) {
-      console.error('Failed to parse shared movie URL', e);
-    }
-    return () => {
-      isCancelled = true;
-    };
-  }, [moviesList]);
-
-  // Fast status lookup map for catalogue cards
-  const trackingMap = useMemo(() => {
-    const map = new Map<string, UserTrackedItem>();
-    trackingList.forEach(item => map.set(item.movieId, item));
-    return map;
-  }, [trackingList]);
-
-  // Update multi-status tracking (Plan to Watch, Watching, Completed, On Hold, Dropped, or un-track)
-  const handleUpdateTrackingStatus = async (movieId: string, status: MovieWatchStatus | null) => {
-    if (!currentUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-
-    let updatedList: UserTrackedItem[];
-
-    if (!status) {
-      updatedList = trackingList.filter(t => t.movieId !== movieId);
-      setWatchlistIds(prev => prev.filter(id => id !== movieId));
-    } else {
-      const existing = trackingList.find(t => t.movieId === movieId);
-      if (existing) {
-        updatedList = trackingList.map(t => 
-          t.movieId === movieId 
-            ? { ...t, status, updatedAt: new Date().toISOString() } 
-            : t
-        );
-      } else {
-        updatedList = [
-          ...trackingList, 
-          { 
-            movieId, 
-            status, 
-            rewatchCount: 0, 
-            updatedAt: new Date().toISOString() 
-          }
-        ];
+      if (trailerMovie?.id === safeUpdatedMovie.id) {
+        setTrailerMovie(safeUpdatedMovie);
       }
-      // Keep watchlistIds synced for backward compatibility
-      setWatchlistIds(prev => prev.includes(movieId) ? prev : [...prev, movieId]);
-    }
-
-    setTrackingList(updatedList);
-    try {
-      localStorage.setItem(TRACKING_STORAGE_KEY, JSON.stringify(updatedList));
-    } catch (e) {
-      console.warn('Failed to cache tracking list locally:', e);
-    }
-
-    if (currentUser) {
-      try {
-        await saveUserTrackingList(currentUser.uid, updatedList);
-      } catch (err) {
-        console.warn('Failed to sync tracking list to Firestore:', err);
-      }
-    }
+    });
   };
 
-  // Rewatch counter updater for completed films
-  const handleUpdateRewatchCount = async (movieId: string, count: number) => {
-    const safeCount = Math.max(0, count);
-    const updatedList = trackingList.map(t => 
-      t.movieId === movieId 
-        ? { ...t, rewatchCount: safeCount, updatedAt: new Date().toISOString() } 
-        : t
-    );
-
-    setTrackingList(updatedList);
-    try {
-      localStorage.setItem(TRACKING_STORAGE_KEY, JSON.stringify(updatedList));
-    } catch (e) {
-      console.warn('Failed to cache tracking list locally:', e);
-    }
-
-    if (currentUser) {
-      try {
-        await saveUserTrackingList(currentUser.uid, updatedList);
-      } catch (err) {
-        console.warn('Failed to sync rewatch count to Firestore:', err);
-      }
-    }
-  };
-
-  // Save personal external API key (TMDb) to user profile in Firestore
-  const handleSaveApiKey = async (apiKey: string) => {
-    if (!currentUser) return;
-    try {
-      await saveUserApiKey(currentUser.uid, apiKey);
-      setCustomTmdbApiKey(apiKey);
-      setCustomTmdbKey(apiKey);
-      setSyncNotice('Custom TMDb API Key saved securely to your profile!');
-      setTimeout(() => setSyncNotice(null), 4500);
-    } catch (err) {
-      console.error('Failed to save API key to Firestore:', err);
-      throw err;
-    }
-  };
-
-  // Remove personal external API key from user profile in Firestore
-  const handleRemoveApiKey = async () => {
-    if (!currentUser) return;
-    try {
-      await removeUserApiKey(currentUser.uid);
-      setCustomTmdbApiKey(undefined);
-      setCustomTmdbKey(null);
-      setSyncNotice('Custom TMDb API Key removed. Reverted to shared key.');
-      setTimeout(() => setSyncNotice(null), 4500);
-    } catch (err) {
-      console.error('Failed to remove API key from Firestore:', err);
-      throw err;
-    }
-  };
-
-  // Theme switch handler with immediate UI persistence & Firestore sync
-  const handleSelectTheme = async (newTheme: AppTheme) => {
-    setActiveTheme(newTheme);
-    try {
-      localStorage.setItem('afromoviedb_theme_v1', newTheme);
-    } catch (e) {}
-
-    if (currentUser) {
-      try {
-        await saveUserTheme(currentUser.uid, newTheme);
-      } catch (err) {
-        console.warn('Failed to sync theme preference to Firestore:', err);
-      }
-    }
-
-    const themeName = newTheme === 'emerald' ? 'Nigerian Emerald' : newTheme === 'gold' ? 'Royal Gold' : 'Deep Obsidian';
-    setSyncNotice(`Switched theme to ${themeName}!`);
-    setTimeout(() => setSyncNotice(null), 3000);
-  };
-
-  // Save / Update custom themed collection in Firestore
-  const handleSaveCustomList = async (list: CustomUserList) => {
-    if (!currentUser) return;
-    try {
-      await saveCustomList(list, currentUser.uid);
-      setUserCustomLists(prev => {
-        const filtered = prev.filter(l => l.id !== list.id);
-        return [list, ...filtered];
-      });
-      setSyncNotice(`Collection "${list.title}" published successfully!`);
-      setTimeout(() => setSyncNotice(null), 4500);
-    } catch (err) {
-      console.error('Failed to save custom collection:', err);
-      throw err;
-    }
-  };
-
-  // Delete custom collection from Firestore
-  const handleDeleteCustomList = async (listId: string) => {
-    try {
-      await deleteCustomList(listId);
-      setUserCustomLists(prev => prev.filter(l => l.id !== listId));
+  const handleDeleteCustomList = (listId: string) =>
+    deleteUserCustomList(listId, () => {
       if (activeStandaloneList?.id === listId) {
-        setActiveStandaloneList(null);
+        closeList();
       }
-      setSyncNotice('Collection removed.');
-      setTimeout(() => setSyncNotice(null), 3500);
-    } catch (err) {
-      console.error('Failed to delete custom collection:', err);
-    }
-  };
+    });
 
-  // Handle closing standalone list and removing ?list from URL
-  const handleCloseStandaloneList = () => {
-    setActiveStandaloneList(null);
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has('list')) {
-        url.searchParams.delete('list');
-        const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
-        window.history.replaceState({}, '', cleanUrl);
-      }
-    } catch (e) {}
-  };
-
-  // Check URL query parameter (?list=id) to auto-open standalone collection view
-  useEffect(() => {
-    let isCancelled = false;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const sharedListId = params.get('list');
-      if (sharedListId) {
-        const found = userCustomLists.find(l => l.id === sharedListId);
-        if (found) {
-          setActiveStandaloneList(found);
-        } else {
-          getCustomListById(sharedListId).then(loadedList => {
-            if (!isCancelled && loadedList) {
-              setActiveStandaloneList(loadedList);
-            }
-          }).catch(e => console.warn('Could not auto-resolve shared list', e));
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse shared list URL', e);
-    }
-    return () => {
-      isCancelled = true;
-    };
-  }, [userCustomLists]);
-
-  // Synchronize ?list=<id> in browser URL history when standalone list is active
-  useEffect(() => {
-    if (activeStandaloneList) {
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('list') !== activeStandaloneList.id) {
-          url.searchParams.set('list', activeStandaloneList.id);
-          window.history.pushState({ listId: activeStandaloneList.id }, '', url.toString());
-        }
-      } catch (e) {}
-    }
-  }, [activeStandaloneList?.id]);
-
-  // Multi-decade historical import sweep (1990s to 2020s with direct Firestore batch writes)
-  const handleTriggerHistoricalSweep = async () => {
-    if (sweepAbortController.current) return;
-    const controller = new AbortController();
-    sweepAbortController.current = controller;
-    setIsSweeping(true);
-    setIsFinishingSweep(false);
-    setSweepProgress(null);
+  const handleTriggerHistoricalSweep = () => {
     setShowSweepPill(true);
-
-    let collectedMovies: Movie[] = [];
-
-    try {
-      const result = await runDeepHistoricalSweep(
-        moviesList,
-        (progress) => {
-          setSweepProgress(progress);
-        },
-        undefined,
-        controller.signal
-      );
-
-      collectedMovies = result.newMovies || [];
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        console.error('Historical sweep error:', err);
-      }
-    }
-
-    // Graceful Stop & Cloud Export:
-    // When the sweep completes or when the user clicks "Finished" early,
-    // take all movies successfully swept or imported up to that point,
-    // and securely export/save them to live Firebase Firestore custom_movies!
-    if (collectedMovies.length > 0) {
-      setSweepProgress((progress) => ({
-        decadeLabel: 'Exporting',
-        page: progress?.page || 1,
-        totalPages: progress?.totalPages || 20,
-        importedCount: collectedMovies.length,
-        percent: 100,
-        isComplete: false,
-        isCancelled: false,
-        isSaving: true,
-        firestoreSaveStarted: true,
-        statusText: `Exporting ${collectedMovies.length} swept classic films to Cloud Firestore…`
-      }));
-
-      try {
-        await saveMultipleFirestoreMovies(
-          collectedMovies,
-          currentUser?.uid || 'community-sweep'
-        );
-      } catch (err) {
-        console.warn('Batch write of swept movies encountered an issue:', err);
-      }
-
-      setSweepProgress({
-        decadeLabel: 'Complete',
-        page: 20,
-        totalPages: 20,
-        importedCount: collectedMovies.length,
-        percent: 100,
-        isComplete: true,
-        isCancelled: false,
-        isSaving: false,
-        firestoreSaveStarted: false,
-        statusText: `Finished! Successfully saved ${collectedMovies.length} classic films to Cloud Firestore.`
-      });
-
-      setSyncNotice(`Published ${collectedMovies.length} classic films directly to Cloud Firestore!`);
-      setTimeout(() => setSyncNotice(null), 5000);
-    } else {
-      setSweepProgress({
-        decadeLabel: 'Complete',
-        page: 20,
-        totalPages: 20,
-        importedCount: 0,
-        percent: 100,
-        isComplete: true,
-        isCancelled: false,
-        isSaving: false,
-        firestoreSaveStarted: false,
-        statusText: 'Finished! No new unique Nigerian films were found to import.'
-      });
-    }
-
-    if (sweepAbortController.current === controller) {
-      sweepAbortController.current = null;
-    }
-    setIsSweeping(false);
-    setIsFinishingSweep(false);
+    return triggerHistoricalSweep();
   };
-
-  const handleFinishHistoricalSweep = () => {
-    const controller = sweepAbortController.current;
-    if (!controller || controller.signal.aborted) return;
-    setIsFinishingSweep(true);
-    controller.abort();
-  };
-
-  useEffect(() => () => {
-    sweepAbortController.current?.abort();
-  }, []);
-
-  // Toggle watchlist (Auth-gated)
-  const handleToggleWatchlist = (movieId: string) => {
-    if (!currentUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-    const isCurrentlyTracked = watchlistIds.includes(movieId) || trackingMap.has(movieId);
-    if (isCurrentlyTracked) {
-      handleUpdateTrackingStatus(movieId, null);
-    } else {
-      handleUpdateTrackingStatus(movieId, 'plan_to_watch');
-    }
-  };
-
-  const handleClearWatchlist = () => {
-    setWatchlistIds([]);
-  };
-
-  // Add review handler (syncs securely to Firestore and falls back to local storage)
-  const handleAddReview = async (newRev: Omit<UserReview, 'id' | 'createdAt'>) => {
-    const fullReview: UserReview = {
-      ...newRev,
-      id: 'usr-rev-' + Date.now(),
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-
-    setReviews(prev => [fullReview, ...prev]);
-
-    // Save to localStorage
-    try {
-      const saved = localStorage.getItem(REVIEWS_STORAGE_KEY);
-      const userAdded = saved ? JSON.parse(saved) : [];
-      localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify([fullReview, ...userAdded]));
-    } catch (e) {
-      console.error('Failed to save review locally', e);
-    }
-
-    // Sync to Firestore if logged in
-    if (currentUser) {
-      try {
-        await addFirestoreReview({
-          ...newRev,
-          userId: currentUser.uid,
-          userEmail: currentUser.email || undefined
-        });
-      } catch (err) {
-        console.warn('Firestore review sync failed (saved locally):', err);
-      }
-    }
-  };
-
-  // Delete review handler (deletes from Firestore and local storage)
-  const handleDeleteReview = async (reviewId: string) => {
-    setReviews(prev => prev.filter(r => r.id !== reviewId));
-
-    try {
-      const saved = localStorage.getItem(REVIEWS_STORAGE_KEY);
-      if (saved) {
-        const parsed: UserReview[] = JSON.parse(saved);
-        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(parsed.filter(r => r.id !== reviewId)));
-      }
-    } catch (e) {
-      console.error('Failed to update local reviews', e);
-    }
-
-    if (currentUser) {
-      try {
-        await deleteFirestoreReview(reviewId);
-      } catch (err) {
-        console.warn('Failed to delete review from Firestore:', err);
-      }
-    }
-  };
-
-  // Automated daily sync runs only for authenticated curators/users (hourly background sync is handled by GitHub Actions)
-  useEffect(() => {
-    if (!currentUser || !isCatalogReady || !isCatalogInitializationComplete || !isAuthReady || catalogLoadError || dailySyncStarted.current) {
-      return;
-    }
-
-    dailySyncStarted.current = true;
-    let isMounted = true;
-
-    const runAutomatedDailySync = async () => {
-      try {
-        const result = await checkAndRunDailySync(moviesList, (count: number, total: number) => {
-          if (isMounted) {
-            setIsSyncingReleases(true);
-            setSyncNotice(`Auto-syncing NaijaReel with fresh Nigerian releases (${count}/${total})...`);
-          }
-        }, currentUser.uid);
-
-        if (!isMounted) return;
-
-        if (result.isSyncPerformed && result.syncedMovies.length > 0) {
-          setSyncNotice(`NaijaReel automatically updated with ${result.syncedMovies.length} fresh Nollywood releases!`);
-          setTimeout(() => {
-            if (isMounted) setSyncNotice(null);
-          }, 4500);
-        }
-      } catch (err) {
-        console.warn('Background daily sync encountered an issue:', err);
-      } finally {
-        if (isMounted) {
-          setIsSyncingReleases(false);
-        }
-      }
-    };
-
-    runAutomatedDailySync();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [currentUser, isAuthReady, isCatalogReady, isCatalogInitializationComplete, catalogLoadError]);
-
-
 
   // Watchlist movies objects
   const watchlistMovies = useMemo(() => {
-    return moviesList.filter(m => watchlistIds.includes(m.id));
-  }, [watchlistIds, moviesList]);
+    return movies.filter(m => watchlistIds.includes(m.id));
+  }, [watchlistIds, movies]);
 
-  // Quick Collections handler
-  const handleCollectionSelect = (collId: string) => {
-    setActiveCollection(collId);
-    if (collId === 'all') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'All',
-        selectedEra: 'All',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'rating'
-      }));
-    } else if (collId === 'box-office') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'All',
-        selectedEra: 'All',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'box_office'
-      }));
-    } else if (collId === 'epics') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'Epic & Folklore',
-        selectedEra: 'All',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'rating'
-      }));
-    } else if (collId === 'golden-era') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'All',
-        selectedEra: 'Golden Era (1992-2005)',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'year_asc'
-      }));
-    } else if (collId === 'crime-heist') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'Crime & Thriller',
-        selectedEra: 'All',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'rating'
-      }));
-    } else if (collId === 'community') {
-      setFilterState(prev => ({
-        ...prev,
-        selectedGenre: 'All',
-        selectedEra: 'All',
-        selectedLanguage: 'All',
-        selectedPlatform: 'All',
-        watchlistOnly: false,
-        sortBy: 'year_desc'
-      }));
-    }
-  };
-
-  // Filter and sort movies
-  const filteredMovies = useMemo(() => {
-    return moviesList.filter(movie => {
-      // "All" is intentionally not gated by collection tags or TMDb metadata:
-      // every entry here came from the custom_movies Firestore snapshot.
-      const selectedCollection = activeCollection.trim().toLowerCase();
-      const allTitlesSelected = selectedCollection === 'all' ||
-        selectedCollection === DEFAULT_MOVIE_COLLECTION.toLowerCase();
-
-      // Community filter
-      if (!allTitlesSelected && activeCollection === 'community' && !movie.isUserAdded) {
-        return false;
-      }
-
-      // Watchlist filter
-      if (filterState.watchlistOnly && !watchlistIds.includes(movie.id)) {
-        return false;
-      }
-
-      // Search Query
-      if (filterState.searchQuery) {
-        const query = filterState.searchQuery.toLowerCase();
-        const matchesTitle = movie.title.toLowerCase().includes(query);
-        const matchesNative = movie.nativeTitle?.toLowerCase().includes(query) || false;
-        const matchesDirector = movie.director.toLowerCase().includes(query);
-        const matchesCast = movie.leadCast.some(c => c.actor.toLowerCase().includes(query));
-        const matchesSynopsis = movie.synopsis.toLowerCase().includes(query);
-        const matchesTagline = movie.tagline.toLowerCase().includes(query);
-
-        if (!matchesTitle && !matchesNative && !matchesDirector && !matchesCast && !matchesSynopsis && !matchesTagline) {
-          return false;
-        }
-      }
-
-      // Genre
-      if (filterState.selectedGenre !== 'All' && !movie.genres.includes(filterState.selectedGenre)) {
-        return false;
-      }
-
-      // Language
-      if (filterState.selectedLanguage !== 'All' && !movie.languages.includes(filterState.selectedLanguage)) {
-        return false;
-      }
-
-      // Era
-      if (filterState.selectedEra !== 'All' && movie.era !== filterState.selectedEra) {
-        return false;
-      }
-
-      // Platform
-      if (filterState.selectedPlatform !== 'All') {
-        const hasPlatform = movie.streamingPlatforms.some(p => p.name === filterState.selectedPlatform);
-        if (!hasPlatform) return false;
-      }
-
-      return true;
-    }).sort((a, b) => {
-      if (filterState.sortBy === 'rating') {
-        const aReviews = reviews.filter(r => r.movieId === a.id);
-        const bReviews = reviews.filter(r => r.movieId === b.id);
-        const aScore = aReviews.length > 0 
-          ? (a.rating + (aReviews.reduce((sum, r) => sum + r.rating, 0) / aReviews.length)) / 2
-          : a.rating;
-        const bScore = bReviews.length > 0 
-          ? (b.rating + (bReviews.reduce((sum, r) => sum + r.rating, 0) / bReviews.length)) / 2
-          : b.rating;
-        return bScore - aScore;
-      }
-      if (filterState.sortBy === 'year_desc') {
-        return b.releaseYear - a.releaseYear;
-      }
-      if (filterState.sortBy === 'year_asc') {
-        return a.releaseYear - b.releaseYear;
-      }
-      if (filterState.sortBy === 'runtime_desc') {
-        return (b.runtimeMinutes || 105) - (a.runtimeMinutes || 105);
-      }
-      if (filterState.sortBy === 'runtime_asc') {
-        return (a.runtimeMinutes || 105) - (b.runtimeMinutes || 105);
-      }
-      if (filterState.sortBy === 'rewatch_desc') {
-        const aCount = trackingMap.get(a.id)?.rewatchCount || 0;
-        const bCount = trackingMap.get(b.id)?.rewatchCount || 0;
-        if (bCount !== aCount) return bCount - aCount;
-        return b.rating - a.rating;
-      }
-      if (filterState.sortBy === 'box_office') {
-        const aScore = a.boxOfficeChampion ? 2 : (a.boxOffice ? 1 : 0);
-        const bScore = b.boxOfficeChampion ? 2 : (b.boxOffice ? 1 : 0);
-        if (aScore !== bScore) return bScore - aScore;
-        return b.rating - a.rating;
-      }
-      if (filterState.sortBy === 'title') {
-        return a.title.localeCompare(b.title);
-      }
-      return 0;
-    });
-  }, [filterState, watchlistIds, moviesList, activeCollection, trackingMap, reviews]);
-
-  // Batch display & Load More for Movie Catalogue (Fixed batches of 12 items, no infinite scroll)
-  const MOVIES_BATCH_SIZE = 12;
-  const [displayedMoviesCount, setDisplayedMoviesCount] = useState<number>(MOVIES_BATCH_SIZE);
-
-  // Reset pagination whenever filters or active collection change
-  useEffect(() => {
-    setDisplayedMoviesCount(MOVIES_BATCH_SIZE);
-  }, [filterState, activeCollection]);
-
-  const displayedMovies = useMemo(() => {
-    return filteredMovies.slice(0, displayedMoviesCount);
-  }, [filteredMovies, displayedMoviesCount]);
-
-  const featuredMovies = useMemo(() => {
-    return moviesList.filter(m => m.featured);
-  }, [moviesList]);
-
-  const appThemeClasses = 
+  const appThemeClasses =
     activeTheme === 'gold'
       ? 'bg-[#0e0a04] selection:bg-amber-600 selection:text-white'
       : activeTheme === 'obsidian'
@@ -1019,13 +242,13 @@ export default function App() {
         filterState={filterState}
         setFilterState={setFilterState}
         watchlistCount={watchlistIds.length}
-        onOpenWatchlist={() => setIsWatchlistOpen(true)}
-        onOpenTrivia={() => setIsHeritageOpen(true)}
-        onOpenAutoPull={() => setIsAutoPullOpen(true)}
-        totalMoviesCount={moviesList.length}
+        onOpenWatchlist={openWatchlist}
+        onOpenTrivia={openHeritage}
+        onOpenAutoPull={openAddMovie}
+        totalMoviesCount={movies.length}
         currentUser={currentUser}
         userRole={currentUserProfile?.role}
-        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenAuth={openAuth}
         currentView={currentView}
         onNavigateView={navigateToView}
         activeTheme={activeTheme}
@@ -1053,25 +276,22 @@ export default function App() {
       {activeStandaloneList ? (
         <StandaloneListView
           list={activeStandaloneList}
-          allMovies={moviesList}
+          allMovies={movies}
           currentUser={currentUser}
-          onClose={handleCloseStandaloneList}
-          onSelectMovie={setSelectedMovie}
-          onOpenTrailer={setTrailerMovie}
-          onEditList={(list) => {
-            setEditingCustomList(list);
-            setIsCustomListModalOpen(true);
-          }}
+          onClose={closeList}
+          onSelectMovie={openMovie}
+          onOpenTrailer={openTrailer}
+          onEditList={(list) => openCustomList(list)}
           watchlist={watchlistIds}
           onToggleWatchlist={handleToggleWatchlist}
           trackingMap={trackingMap}
           onUpdateStatus={handleUpdateTrackingStatus}
-          onOpenAuth={() => setIsAuthOpen(true)}
+          onOpenAuth={openAuth}
         />
       ) : currentView === 'profile' ? (
         <UserProfilePage
           currentUser={currentUser}
-          moviesList={moviesList}
+          moviesList={movies}
           watchlist={watchlistIds}
           trackingList={trackingList}
           customTmdbApiKey={customTmdbApiKey}
@@ -1079,30 +299,24 @@ export default function App() {
           activeTheme={activeTheme}
           onSelectTheme={handleSelectTheme}
           userCustomLists={userCustomLists}
-          onOpenCreateList={() => {
-            setEditingCustomList(null);
-            setIsCustomListModalOpen(true);
-          }}
-          onOpenEditList={(list) => {
-            setEditingCustomList(list);
-            setIsCustomListModalOpen(true);
-          }}
+          onOpenCreateList={() => openCustomList(null)}
+          onOpenEditList={(list) => openCustomList(list)}
           onDeleteCustomList={handleDeleteCustomList}
-          onViewStandaloneList={(list) => setActiveStandaloneList(list)}
+          onViewStandaloneList={(list) => openList(list)}
           onUpdateStatus={handleUpdateTrackingStatus}
           onUpdateRewatchCount={handleUpdateRewatchCount}
           onSaveApiKey={handleSaveApiKey}
           onRemoveApiKey={handleRemoveApiKey}
           onToggleWatchlist={handleToggleWatchlist}
           onClearWatchlist={handleClearWatchlist}
-          onSelectMovie={setSelectedMovie}
-          onOpenTrailer={setTrailerMovie}
+          onSelectMovie={openMovie}
+          onOpenTrailer={openTrailer}
           onDeleteReview={handleDeleteReview}
-          onOpenAddMovie={() => setIsAutoPullOpen(true)}
-          onOpenAuth={() => setIsAuthOpen(true)}
+          onOpenAddMovie={openAddMovie}
+          onOpenAuth={openAuth}
           onSignOut={handleSignOut}
           onBackToCatalogue={() => navigateToView('catalogue')}
-          onOpenEdit={(movie) => setEditingMovie(movie)}
+          onOpenEdit={openEditMovie}
           onNavigateAdmin={() => navigateToView('admin')}
           isAdmin={isAdmin}
           userRole={currentUserProfile?.role}
@@ -1111,13 +325,13 @@ export default function App() {
         <AdminRoute
           currentUser={currentUser}
           onNavigateHome={() => navigateToView('catalogue')}
-          onOpenAuth={() => setIsAuthOpen(true)}
+          onOpenAuth={openAuth}
           allowedRoles={['owner', 'admin', 'moderator']}
         >
           <AdminDashboard
             currentUser={currentUser}
             onNavigateHome={() => navigateToView('catalogue')}
-            moviesList={moviesList}
+            moviesList={movies}
             activeTheme={activeTheme}
           />
         </AdminRoute>
@@ -1127,13 +341,13 @@ export default function App() {
           {!filterState.searchQuery && !filterState.watchlistOnly && (
             <HeroSpotlight
               featuredMovies={featuredMovies}
-              onSelectMovie={setSelectedMovie}
-              onOpenTrailer={setTrailerMovie}
+              onSelectMovie={openMovie}
+              onOpenTrailer={openTrailer}
               isWatchlisted={(id) => watchlistIds.includes(id)}
               onToggleWatchlist={handleToggleWatchlist}
               currentUser={currentUser}
-              onOpenEdit={(movie) => setEditingMovie(movie)}
-              onOpenAuth={() => setIsAuthOpen(true)}
+              onOpenEdit={openEditMovie}
+              onOpenAuth={openAuth}
             />
           )}
 
@@ -1153,7 +367,7 @@ export default function App() {
                 { id: 'crime-heist', label: 'Lagos Crime & Thrillers', icon: Sparkles },
                 { 
                   id: 'community', 
-                  label: `Added Movies (${moviesList.filter(m => m.isUserAdded).length})`, 
+                  label: `Added Movies (${movies.filter(m => m.isUserAdded).length})`, 
                   icon: Plus 
                 }
               ].map(item => {
@@ -1188,12 +402,12 @@ export default function App() {
             />
 
             {/* Movie Results Grid or List */}
-            {!isCatalogReady ? (
+            {loadingMovies ? (
               <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-3xl border border-slate-800 bg-slate-900/40 p-8 text-center">
                 <Film className="h-10 w-10 animate-pulse text-emerald-400" />
                 <p className="text-sm text-slate-300">Loading the movie catalog from Firestore…</p>
               </div>
-            ) : catalogLoadError && moviesList.length === 0 ? (
+            ) : catalogLoadError && movies.length === 0 ? (
               <div className="rounded-3xl border border-rose-900/60 bg-rose-950/20 p-8 text-center">
                 <h3 className="font-bold text-white">Could not load the movie catalog</h3>
                 <p className="mt-2 text-sm text-slate-400">{catalogLoadError}</p>
@@ -1211,22 +425,14 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
-                    onClick={() => setFilterState({
-                      searchQuery: '',
-                      selectedGenre: 'All',
-                      selectedLanguage: 'All',
-                      selectedEra: 'All',
-                      selectedPlatform: 'All',
-                      sortBy: 'rating',
-                      watchlistOnly: false
-                    })}
+                    onClick={resetFilters}
                     className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all cursor-pointer"
                   >
                     Reset All Filters
                   </button>
                   {currentUser ? (
                     <button
-                      onClick={() => setIsAutoPullOpen(true)}
+                      onClick={openAddMovie}
                       className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-amber-600 hover:brightness-110 text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-md"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -1234,7 +440,7 @@ export default function App() {
                     </button>
                   ) : (
                     <button
-                      onClick={() => setIsAuthOpen(true)}
+                      onClick={openAuth}
                       className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
                     >
                       <span>Sign In to Add Titles</span>
@@ -1246,37 +452,37 @@ export default function App() {
               <>
                 <MovieGrid
                   movies={displayedMovies}
-                  onSelectMovie={setSelectedMovie}
-                  onOpenTrailer={setTrailerMovie}
+                  onSelectMovie={openMovie}
+                  onOpenTrailer={openTrailer}
                   watchlistIds={watchlistIds}
                   onToggleWatchlist={handleToggleWatchlist}
                   trackingMap={trackingMap}
                   onUpdateStatus={handleUpdateTrackingStatus}
                   viewMode={viewMode}
                   currentUser={currentUser}
-                  onOpenEdit={(m) => setEditingMovie(m)}
-                  onOpenAuth={() => setIsAuthOpen(true)}
+                  onOpenEdit={openEditMovie}
+                  onOpenAuth={openAuth}
                   reviews={reviews}
                 />
 
                 {/* Clean Load More Button (Fixed Batches of 12) */}
-                {displayedMoviesCount < filteredMovies.length && (
+                {hasMore && (
                   <div className="py-8 flex flex-col items-center justify-center gap-3">
                     <div className="text-xs text-slate-400 font-medium">
                       Showing <strong className="text-white">{displayedMovies.length}</strong> of <strong className="text-white">{filteredMovies.length}</strong> Nollywood titles
                     </div>
                     <button
                       id="load-more-catalogue-btn"
-                      onClick={() => setDisplayedMoviesCount(prev => prev + MOVIES_BATCH_SIZE)}
+                      onClick={loadMore}
                       className="px-8 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 text-amber-300 hover:text-amber-200 text-xs sm:text-sm font-bold shadow-xl shadow-black/50 hover:scale-102 active:scale-98 transition-all cursor-pointer flex items-center gap-2.5 group"
                     >
                       <ChevronDown className="w-4 h-4 text-amber-400 group-hover:translate-y-0.5 transition-transform" />
-                      <span>Load More Titles ({Math.min(MOVIES_BATCH_SIZE, filteredMovies.length - displayedMoviesCount)} remaining)</span>
+                      <span>Load More Titles ({Math.min(batchSize, remainingCount)} remaining)</span>
                     </button>
                   </div>
                 )}
 
-                {filteredMovies.length > MOVIES_BATCH_SIZE && displayedMoviesCount >= filteredMovies.length && (
+                {filteredMovies.length > batchSize && !hasMore && (
                   <div className="py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
                     <span className="w-12 h-px bg-slate-800" />
                     <span>All {filteredMovies.length} Nollywood titles displayed</span>
@@ -1296,106 +502,29 @@ export default function App() {
           if (currentView === 'profile') setCurrentView('catalogue');
           setFilterState(prev => ({ ...prev, [key]: val }));
         }}
-        onOpenHeritage={() => setIsHeritageOpen(true)}
-        onOpenSiteInfo={setActiveSiteInfoPage}
+        onOpenHeritage={openHeritage}
+        onOpenSiteInfo={openSiteInfo}
       />
 
-      {/* Footer information overlays */}
-      <SiteInfoModal
-        page={activeSiteInfoPage}
-        onClose={() => setActiveSiteInfoPage(null)}
-        onOpenAddFilm={() => {
-          setActiveSiteInfoPage(null);
-          if (!currentUser) {
-            setIsAuthOpen(true);
-          } else {
-            setIsAutoPullOpen(true);
-          }
-        }}
-      />
-
-      {/* Movie Details Modal */}
-      {selectedMovie && (
-        <MovieDetailModal
-          movie={selectedMovie}
-          onClose={() => setSelectedMovie(null)}
-          onOpenTrailer={setTrailerMovie}
-          isWatchlisted={watchlistIds.includes(selectedMovie.id)}
-          onToggleWatchlist={handleToggleWatchlist}
-          watchStatus={trackingMap.get(selectedMovie.id)?.status || (watchlistIds.includes(selectedMovie.id) ? 'plan_to_watch' : null)}
-          onUpdateStatus={handleUpdateTrackingStatus}
-          rewatchCount={trackingMap.get(selectedMovie.id)?.rewatchCount || 0}
-          onUpdateRewatchCount={handleUpdateRewatchCount}
-          allMovies={moviesList}
-          onSelectMovie={setSelectedMovie}
-          reviews={reviews}
-          onAddReview={handleAddReview}
-          currentUser={currentUser}
-          onOpenEdit={(m) => setEditingMovie(m)}
-          onUpdateMovie={handleUpdateMovie}
-          onOpenAuth={() => setIsAuthOpen(true)}
-        />
-      )}
-
-      {/* Dedicated Edit Movie Modal (Exclusively for Authenticated Firebase Users) */}
-      <EditMovieModal
-        isOpen={Boolean(editingMovie)}
-        movie={editingMovie}
-        onClose={() => setEditingMovie(null)}
-        onSaveMovie={handleUpdateMovie}
-        currentUser={currentUser}
-      />
-
-      {/* Video Trailer Modal */}
-      <TrailerModal
-        movie={trailerMovie}
-        onClose={() => setTrailerMovie(null)}
-      />
-
-      {/* Watchlist Modal */}
-      <WatchlistModal
-        isOpen={isWatchlistOpen}
-        onClose={() => setIsWatchlistOpen(false)}
+      {/* Application Modals */}
+      <AppModals
+        modalRouter={modalRouter}
+        movies={movies}
+        watchlistIds={watchlistIds}
         watchlistMovies={watchlistMovies}
-        onRemoveFromWatchlist={handleToggleWatchlist}
+        trackingMap={trackingMap}
+        reviews={reviews}
+        currentUser={currentUser}
+        onToggleWatchlist={handleToggleWatchlist}
         onClearWatchlist={handleClearWatchlist}
-        onSelectMovie={setSelectedMovie}
-        onOpenTrailer={setTrailerMovie}
-      />
-
-      {/* Nollywood Heritage Modal */}
-      <HeritageModal
-        isOpen={isHeritageOpen}
-        onClose={() => setIsHeritageOpen(false)}
-      />
-
-      {/* Add Movie & Auto-Pull Modal */}
-      <AddMovieModal
-        isOpen={isAutoPullOpen}
-        onClose={() => setIsAutoPullOpen(false)}
-        onAddMovie={handleMoviePulled}
-      />
-
-      {/* Authentication Modal */}
-      <AuthModal
-        isOpen={isAuthOpen}
-        onClose={() => setIsAuthOpen(false)}
-        currentUser={currentUser}
+        onUpdateTrackingStatus={handleUpdateTrackingStatus}
+        onUpdateRewatchCount={handleUpdateRewatchCount}
+        onAddReview={handleAddReview}
+        onMoviePulled={handleMoviePulled}
+        onUpdateMovie={handleUpdateMovie}
+        onSaveCustomList={handleSaveCustomList}
         onSignOut={handleSignOut}
-        onOpenProfile={() => setCurrentView('profile')}
-      />
-
-      {/* Custom Curated Collection Modal */}
-      <CustomListModal
-        isOpen={isCustomListModalOpen}
-        onClose={() => {
-          setIsCustomListModalOpen(false);
-          setEditingCustomList(null);
-        }}
-        onSaveList={handleSaveCustomList}
-        allMovies={moviesList}
-        currentUser={currentUser}
-        editingList={editingCustomList}
+        onOpenProfile={() => navigateToView('profile')}
       />
 
       {/* Floating 'Back to Top' Button (Appears only in movie catalogue view when scrolled past first batch of movies) */}
@@ -1434,3 +563,4 @@ export default function App() {
     </div>
   );
 }
+

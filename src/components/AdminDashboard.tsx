@@ -10,13 +10,11 @@ import { auth } from '../lib/firebase';
 import { 
   subscribeToAllUsers, 
   updateUserRole, 
-  isUserOwner, 
   saveFirestoreCustomMovie,
   purgeNonNigerianMoviesFromFirestore,
-  PurgeResult,
-  PRIMARY_OWNER_UID,
-  PRIMARY_OWNER_EMAIL
+  PurgeResult
 } from '../lib/firestoreService';
+import { isUserOwner, resolveUserRole } from '../lib/adminConfig';
 import { 
   searchMoviesOnline, 
   pullMovieDetailsFromOnline, 
@@ -132,7 +130,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Role promotion / revocation handler
   const handleUpdateRole = async (targetUser: AppUserProfile, newRole: UserRole) => {
-    if (targetUser.uid === PRIMARY_OWNER_UID || (targetUser.email && targetUser.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase())) {
+    if (isUserOwner(targetUser)) {
       setRoleActionToast({
         message: 'The Primary System Owner cannot be modified or demoted.',
         type: 'error'
@@ -981,7 +979,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </tr>
                   ) : (
                     filteredUsers.map((u) => {
-                      const isOwnerUser = u.uid === PRIMARY_OWNER_UID || (!!u.email && u.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()) || u.role === 'owner';
+                      const isOwnerUser = resolveUserRole(u, u) === 'owner';
                       const isUpdating = updatingUserId === u.uid;
 
                       return (

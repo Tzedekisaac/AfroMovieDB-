@@ -5,6 +5,15 @@ import {
 } from 'firebase/firestore';
 import type { QueryDocumentSnapshot, Query, DocumentData, QuerySnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase.ts';
+import {
+  PRIMARY_OWNER_UID,
+  PRIMARY_OWNER_EMAIL,
+  isUserOwner,
+  resolveUserRole,
+  isUserAdminOrOwner,
+  isUserModeratorOrHigher,
+  hasRequiredRole
+} from './adminConfig.ts';
 import type { Movie, UserReview, UserTrackedItem, MovieWatchStatus, UserApiSettings, AppTheme, CustomUserList, UserRole, AppUserProfile } from '../types.ts';
 import { DEFAULT_MOVIE_COLLECTION } from '../utils/movieCollections.ts';
 import { sanitizeAndTagMovie } from '../utils/sanitizeAndTagMovie.ts';
@@ -18,7 +27,7 @@ import {
   NOLLYWOOD_PRODUCTION_COMPANY_KEYWORDS,
   hasRecognizedNollywoodIndicators
 } from '../utils/nigerianMovieValidator.ts';
-import { sanitizeMovie } from '../utils/api.ts';
+import { sanitizeMovie } from '../utils/api/sanitization.ts';
 
 export const OperationType = {
   CREATE: 'create',
@@ -477,48 +486,43 @@ export async function removeUserApiKey(userId: string) {
 }
 
 // ==========================================
-// ADMIN & RBAC AUTHORIZATION CONFIGURATION
+// ADMIN & RBAC AUTHORIZATION RE-EXPORTS
 // ==========================================
-export const PRIMARY_OWNER_UID = 'PQaO8nC64QXoQAO6ZQ50nG7i3Ux2';
-export const PRIMARY_OWNER_EMAIL = 'justiceisaac06@gmail.com';
+export {
+  PRIMARY_OWNER_UID,
+  PRIMARY_OWNER_EMAIL,
+  isUserOwner,
+  resolveUserRole,
+  isUserAdminOrOwner,
+  isUserModeratorOrHigher,
+  hasRequiredRole
+};
 
-/**
- * Checks if the given user matches the primary owner credentials.
- */
-export function isUserOwner(user?: { uid?: string | null; email?: string | null } | null): boolean {
-  if (!user) return false;
-  if (user.uid === PRIMARY_OWNER_UID) return true;
-  if (user.email && user.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()) return true;
-  return false;
-}
-
-/**
- * Checks if the user is an administrator or system owner.
- */
-export function isUserAdminOrOwner(
-  profile?: AppUserProfile | null, 
-  user?: { uid?: string | null; email?: string | null } | null
-): boolean {
-  if (isUserOwner(user)) return true;
-  if (!profile) return false;
-  return profile.role === 'owner' || profile.role === 'admin' || profile.isAdmin === true;
-}
-
-/**
- * Checks if the user has moderator privileges or higher (moderator, admin, owner).
- */
-export function isUserModeratorOrHigher(
-  profile?: AppUserProfile | null, 
-  user?: { uid?: string | null; email?: string | null } | null
-): boolean {
-  if (isUserAdminOrOwner(profile, user)) return true;
-  if (!profile) return false;
-  return profile.role === 'moderator';
+function mapSnapshotToUserProfile(
+  uid: string,
+  data: Record<string, any>
+): AppUserProfile {
+  const email = data.email || null;
+  const role = resolveUserRole(
+    { uid, email, role: data.role, isAdmin: data.isAdmin },
+    { uid, email }
+  );
+  return {
+    uid,
+    email,
+    displayName: data.displayName || null,
+    photoURL: data.photoURL || null,
+    role,
+    isAdmin: role === 'owner' || role === 'admin',
+    createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+    lastLoginAt: data.lastLoginAt?.toDate ? data.lastLoginAt.toDate().toISOString() : data.lastLoginAt,
+    updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+  };
 }
 
 /**
  * Automatically synchronizes user profile metadata into the Firestore `users` collection upon login.
- * Auto-assigns owner permissions if credentials match PRIMARY_OWNER_UID or PRIMARY_OWNER_EMAIL.
+ * Auto-assigns owner permissions if credentials match centralized PRIMARY_OWNER_UID or PRIMARY_OWNER_EMAIL.
  */
 export async function syncUserProfileOnLogin(user: {
   uid: string;
@@ -550,8 +554,8 @@ export async function syncUserProfileOnLogin(user: {
       };
     } else {
       const data = snap.data();
-      const currentRole: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
-      const isAdmin = isOwner || currentRole === 'admin' || data.isAdmin === true;
+      const currentRole = resolveUserRole(data, user);
+      const isAdmin = currentRole === 'owner' || currentRole === 'admin';
       
       const updatePayload: Record<string, any> = {
         lastLoginAt: serverTimestamp(),
@@ -597,20 +601,7 @@ export function subscribeToUserProfile(userId: string, callback: (profile: AppUs
   const userDocRef = doc(db, 'users', userId);
   return onSnapshot(userDocRef, (snap) => {
     if (snap.exists()) {
-      const data = snap.data();
-      const isOwner = userId === PRIMARY_OWNER_UID || (!!data.email && data.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase());
-      const role: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
-      callback({
-        uid: snap.id,
-        email: data.email || null,
-        displayName: data.displayName || null,
-        photoURL: data.photoURL || null,
-        role,
-        isAdmin: isOwner || role === 'admin' || data.isAdmin === true,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
-        lastLoginAt: data.lastLoginAt?.toDate ? data.lastLoginAt.toDate().toISOString() : data.lastLoginAt,
-        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
-      });
+      callback(mapSnapshotToUserProfile(snap.id, snap.data()));
     } else {
       callback(null);
     }
@@ -630,28 +621,18 @@ export function subscribeToAllUsers(callback: (users: AppUserProfile[]) => void)
     let hasOwner = false;
 
     snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      const isOwner = docSnap.id === PRIMARY_OWNER_UID || (!!data.email && data.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase());
-      if (isOwner) hasOwner = true;
-      const role: UserRole = isOwner ? 'owner' : (data.role || (data.isAdmin ? 'admin' : 'user'));
-      list.push({
-        uid: docSnap.id,
-        email: data.email || null,
-        displayName: data.displayName || null,
-        photoURL: data.photoURL || null,
-        role,
-        isAdmin: isOwner || role === 'admin' || data.isAdmin === true,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
-        lastLoginAt: data.lastLoginAt?.toDate ? data.lastLoginAt.toDate().toISOString() : data.lastLoginAt,
-        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
-      });
+      const profile = mapSnapshotToUserProfile(docSnap.id, docSnap.data());
+      if (profile.role === 'owner') {
+        hasOwner = true;
+      }
+      list.push(profile);
     });
 
-    if (!hasOwner) {
+    if (!hasOwner && (PRIMARY_OWNER_UID || PRIMARY_OWNER_EMAIL)) {
       list.unshift({
         uid: PRIMARY_OWNER_UID,
-        email: PRIMARY_OWNER_EMAIL,
-        displayName: 'Justice Isaac (Primary Owner)',
+        email: PRIMARY_OWNER_EMAIL || null,
+        displayName: 'Primary Owner',
         photoURL: null,
         role: 'owner',
         isAdmin: true,
@@ -672,7 +653,7 @@ export function subscribeToAllUsers(callback: (users: AppUserProfile[]) => void)
  * Prevents modifying or demoting the primary owner.
  */
 export async function updateUserRole(targetUserId: string, newRole: UserRole, targetUserEmail?: string | null) {
-  if (targetUserId === PRIMARY_OWNER_UID || (targetUserEmail && targetUserEmail.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase())) {
+  if (isUserOwner({ uid: targetUserId, email: targetUserEmail })) {
     throw new Error('Permission Denied: Cannot modify or revoke the Primary Owner role.');
   }
 

@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
-import { ShieldAlert, Lock, ArrowLeft, LogIn, Loader2, Sparkles } from 'lucide-react';
-import { isUserOwner, isUserAdminOrOwner, isUserModeratorOrHigher, subscribeToUserProfile, PRIMARY_OWNER_UID, PRIMARY_OWNER_EMAIL } from '../lib/firestoreService';
+import { ShieldAlert, Lock, ArrowLeft, LogIn, Loader2 } from 'lucide-react';
+import { subscribeToUserProfile } from '../lib/firestoreService';
+import {
+  PRIMARY_OWNER_UID,
+  PRIMARY_OWNER_EMAIL,
+  resolveUserRole,
+  hasRequiredRole
+} from '../lib/adminConfig';
 import { AppUserProfile, UserRole } from '../types';
 
 export { PRIMARY_OWNER_UID, PRIMARY_OWNER_EMAIL };
@@ -41,10 +47,9 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Check authorization
-  const isOwner = isUserOwner(currentUser);
-  const userRole: UserRole = isOwner ? 'owner' : (profile?.role || (profile?.isAdmin ? 'admin' : 'user'));
-  const isAuthorized = isOwner || allowedRoles.includes(userRole) || (allowedRoles.includes('admin') && profile?.isAdmin === true);
+  // Centralized role & authorization check
+  const userRole = resolveUserRole(profile, currentUser);
+  const isAuthorized = hasRequiredRole(allowedRoles, profile, currentUser);
 
   if (!currentUser) {
     return (
