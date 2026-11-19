@@ -1,15 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { auth } from './lib/firebase';
 import { 
-  subscribeToUserWatchlist, 
-  subscribeToUserData,
   saveUserTrackingList,
-  saveUserWatchlist, 
   saveUserApiKey,
   removeUserApiKey,
   saveUserTheme,
-  subscribeToUserCustomLists,
   getCustomListById,
   saveCustomList,
   deleteCustomList,
@@ -19,12 +13,9 @@ import {
   subscribeToCustomMovies, 
   saveFirestoreCustomMovie, 
   saveMultipleFirestoreMovies,
-  updateFirestoreMovie,
-  purgeNonNigerianMoviesFromFirestore,
-  syncUserProfileOnLogin,
-  subscribeToUserProfile,
-  isUserOwner
+  updateFirestoreMovie
 } from './lib/firestoreService';
+import { useUserSession } from './hooks/useUserSession';
 import { isNigerianMovie } from './utils/nigerianMovieValidator';
 import { 
   bulkSyncNigerianNewReleases, 
@@ -35,7 +26,7 @@ import {
   HistoricalSweepProgress,
   sanitizeMovie
 } from './utils/api';
-import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList, AppUserProfile, UserRole } from './types';
+import { Movie, FilterState, UserReview, UserTrackedItem, MovieWatchStatus, AppTheme, CustomUserList } from './types';
 import { DEFAULT_MOVIE_COLLECTION } from './utils/movieCollections';
 import { sanitizeAndTagMovie } from './utils/sanitizeAndTagMovie';
 import { sanitizeAndAlignMovieMetadata } from './utils/validation';
@@ -64,7 +55,6 @@ import {
   RotateCcw, SlidersHorizontal, Search, Clapperboard, Plus, RefreshCw, CheckCircle2, ChevronDown, ArrowUp 
 } from 'lucide-react';
 
-const WATCHLIST_STORAGE_KEY = 'afromoviedb_watchlist_ids_v1';
 const TRACKING_STORAGE_KEY = 'afromoviedb_tracking_list_v1';
 const REVIEWS_STORAGE_KEY = 'afromoviedb_user_reviews_v1';
 
@@ -110,11 +100,26 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Auth state
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [currentUserProfile, setCurrentUserProfile] = useState<AppUserProfile | null>(null);
+  // Auth, user profile, and user data session hook
+  const {
+    user: currentUser,
+    userProfile: currentUserProfile,
+    isAdmin,
+    loadingAuth,
+    watchlistIds,
+    setWatchlistIds,
+    trackingList,
+    setTrackingList,
+    customTmdbApiKey,
+    setCustomTmdbApiKey,
+    activeTheme,
+    setActiveTheme,
+    userCustomLists,
+    setUserCustomLists,
+    signOutUser: handleSignOut
+  } = useUserSession();
+  const isAuthReady = !loadingAuth;
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [isAuthReady, setIsAuthReady] = useState(false);
 
   // Catalog state is populated exclusively from the Firestore custom_movies snapshot.
   const [isCatalogReady, setIsCatalogReady] = useState(false);
@@ -141,41 +146,7 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
 
-  // Watchlist State (loaded from localStorage initially, synced to Firestore when user logs in)
-  const [watchlistIds, setWatchlistIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(WATCHLIST_STORAGE_KEY) || localStorage.getItem('naijareel_watchlist_ids_v1');
-      return saved ? JSON.parse(saved) : ['a-tribe-called-judah', 'the-black-book', 'anikulapo'];
-    } catch {
-      return ['a-tribe-called-judah', 'the-black-book', 'anikulapo'];
-    }
-  });
-
-  // Multi-Status Tracking System State (Plan to Watch, Watching, Completed, On Hold, Dropped)
-  const [trackingList, setTrackingList] = useState<UserTrackedItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(TRACKING_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Custom TMDb API key stored securely in Firestore
-  const [customTmdbApiKey, setCustomTmdbApiKey] = useState<string | undefined>(undefined);
-
-  // Theme & Accent Customization (Nigerian Emerald, Royal Gold, Deep Obsidian)
-  const [activeTheme, setActiveTheme] = useState<AppTheme>(() => {
-    try {
-      const savedTheme = localStorage.getItem('afromoviedb_theme_v1') as AppTheme;
-      return savedTheme && ['emerald', 'gold', 'obsidian'].includes(savedTheme) ? savedTheme : 'emerald';
-    } catch {
-      return 'emerald';
-    }
-  });
-
-  // Custom Curated User Lists
-  const [userCustomLists, setUserCustomLists] = useState<CustomUserList[]>([]);
+  // Custom Curated User List modals
   const [activeStandaloneList, setActiveStandaloneList] = useState<CustomUserList | null>(null);
   const [isCustomListModalOpen, setIsCustomListModalOpen] = useState(false);
   const [editingCustomList, setEditingCustomList] = useState<CustomUserList | null>(null);
@@ -240,91 +211,7 @@ export default function App() {
   // Quick collections shortcut selection
   const [activeCollection, setActiveCollection] = useState<string>('all');
 
-  // Listen to Firebase Auth state & sync profile / role
-  useEffect(() => {
-    let profileUnsub: (() => void) | null = null;
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setIsAuthReady(true);
-
-      if (profileUnsub) {
-        profileUnsub();
-        profileUnsub = null;
-      }
-
-      if (user) {
-        // Sync profile into Firestore users collection
-        syncUserProfileOnLogin(user).catch((err) => {
-          console.warn('Profile sync on auth notice:', err);
-        });
-
-        // Listen for live role and profile changes
-        profileUnsub = subscribeToUserProfile(user.uid, (profile) => {
-          setCurrentUserProfile(profile);
-        });
-      } else {
-        setCurrentUserProfile(null);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-      if (profileUnsub) profileUnsub();
-    };
-  }, []);
-
-  // Listen to Firestore real-time User Data (trackingList, watchlist, custom TMDb API key, theme)
-  useEffect(() => {
-    if (!currentUser) {
-      setCustomTmdbApiKey(undefined);
-      setCustomTmdbKey(null);
-      return;
-    }
-
-    const unsubscribe = subscribeToUserData(currentUser.uid, (data) => {
-      if (data.trackingList) {
-        setTrackingList(data.trackingList);
-      }
-      if (data.watchlist && data.watchlist.length > 0) {
-        setWatchlistIds(prev => Array.from(new Set([...data.watchlist, ...prev])));
-      }
-      if (data.customTmdbApiKey) {
-        setCustomTmdbApiKey(data.customTmdbApiKey);
-        setCustomTmdbKey(data.customTmdbApiKey);
-      } else {
-        setCustomTmdbApiKey(undefined);
-        setCustomTmdbKey(null);
-      }
-      if (data.theme && ['emerald', 'gold', 'obsidian'].includes(data.theme)) {
-        setActiveTheme(data.theme);
-        try {
-          localStorage.setItem('afromoviedb_theme_v1', data.theme);
-        } catch {}
-      }
-    });
-
-    return () => unsubscribe();
-  }, [currentUser]);
-
-  // Listen to user's custom created lists
-  useEffect(() => {
-    if (!currentUser) {
-      setUserCustomLists([]);
-      return;
-    }
-
-    const unsubscribe = subscribeToUserCustomLists(currentUser.uid, (lists) => {
-      setUserCustomLists(lists);
-    });
-
-    // Run auto-cleanup pass on Cloud Firestore in the background
-    purgeNonNigerianMoviesFromFirestore().catch((err) => {
-      console.info('Auto-cleanup pass notice:', err?.message || err);
-    });
-
-    return () => unsubscribe();
-  }, [currentUser]);
 
   // Listen to Firestore Real-time Reviews
   useEffect(() => {
@@ -446,20 +333,7 @@ export default function App() {
     }
   };
 
-  // Save watchlist to localStorage AND sync to Firebase Firestore if logged in
-  useEffect(() => {
-    try {
-      localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlistIds));
-    } catch (e) {
-      console.error('Failed to save watchlist', e);
-    }
 
-    if (currentUser) {
-      saveUserWatchlist(currentUser.uid, watchlistIds).catch(err => {
-        console.warn('Failed to sync watchlist to Firestore:', err);
-      });
-    }
-  }, [watchlistIds, currentUser]);
 
   // Check URL query parameter (?movie=id) to auto-open shared film link
   useEffect(() => {
@@ -941,13 +815,7 @@ export default function App() {
     };
   }, [currentUser, isAuthReady, isCatalogReady, isCatalogInitializationComplete, catalogLoadError]);
 
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error('Sign out error:', err);
-    }
-  };
+
 
   // Watchlist movies objects
   const watchlistMovies = useMemo(() => {
@@ -1236,7 +1104,7 @@ export default function App() {
           onBackToCatalogue={() => navigateToView('catalogue')}
           onOpenEdit={(movie) => setEditingMovie(movie)}
           onNavigateAdmin={() => navigateToView('admin')}
-          isAdmin={currentUserProfile?.isAdmin}
+          isAdmin={isAdmin}
           userRole={currentUserProfile?.role}
         />
       ) : currentView === 'admin' ? (
