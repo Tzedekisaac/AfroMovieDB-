@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { Star, MessageSquare, Send, CheckCircle2, AlertCircle } from 'lucide-react';
-import { UserReview, Movie } from '../types';
+import { Star, MessageSquare, Send, CheckCircle2, AlertCircle, LogIn } from 'lucide-react';
+import { UserReview, Movie, AppUserProfile } from '../types';
 import { 
   subscribeToMovieReviews, 
   addFirestoreReview, 
   calculateMovieRatingBreakdown,
+  resolveReviewAuthorName,
   MovieRatingBreakdown 
 } from '../lib/firestoreService';
 
@@ -13,33 +14,31 @@ export interface ReviewSectionProps {
   movieId: string;
   movie?: Movie | null;
   currentUser?: FirebaseUser | null;
+  userProfile?: AppUserProfile | null;
   onOpenAuth?: () => void;
   onReviewsCountChange?: (count: number) => void;
 }
 
 export const ReviewSection: React.FC<ReviewSectionProps> = ({
   movieId,
-  movie,
+  movie: _movie,
   currentUser,
+  userProfile,
   onOpenAuth,
   onReviewsCountChange
 }) => {
   const [reviews, setReviews] = useState<UserReview[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [userName, setUserName] = useState<string>('');
   const [userRating, setUserRating] = useState<number>(10);
-  const [userLocation, setUserLocation] = useState<string>('Lagos, Nigeria');
   const [userComment, setUserComment] = useState<string>('');
   const [reviewSubmitted, setReviewSubmitted] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Auto-fill user name if logged in
-  useEffect(() => {
-    if (currentUser && !userName) {
-      setUserName(currentUser.displayName || currentUser.email?.split('@')[0] || '');
-    }
-  }, [currentUser]);
+  const accountUsername = useMemo(
+    () => resolveReviewAuthorName(userProfile, currentUser),
+    [userProfile, currentUser]
+  );
 
   // Dynamic real-time subscription strictly filtered by current movieId == currentMovieId
   useEffect(() => {
@@ -110,47 +109,45 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
       return;
     }
 
-    if (!movieId) return;
-    if (!userName.trim() || !userComment.trim()) return;
+    if (!accountUsername) {
+      setSubmitError('Please set a username on your account first before submitting a review.');
+      return;
+    }
+
+    if (!movieId || !userComment.trim()) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
 
     const newRevPayload = {
       movieId,
-      userName: userName.trim(),
+      userName: accountUsername,
       rating: userRating,
       comment: userComment.trim(),
-      userLocation: userLocation.trim() || 'Nigeria',
       userId: currentUser.uid,
       userEmail: currentUser.email || undefined
     };
 
-    // Optimistic local review
-    const optimisticReview: UserReview = {
-      ...newRevPayload,
-      id: 'usr-rev-' + Date.now(),
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-
-    setReviews(prev => [optimisticReview, ...prev.filter(r => r.id !== optimisticReview.id)]);
-
-    // Save locally
     try {
-      const saved = localStorage.getItem('afromoviedb_user_reviews_v1');
-      const allLocal = saved ? JSON.parse(saved) : [];
-      localStorage.setItem('afromoviedb_user_reviews_v1', JSON.stringify([optimisticReview, ...allLocal]));
-    } catch {}
+      const docId = await addFirestoreReview(newRevPayload);
+      const savedReview: UserReview = {
+        ...newRevPayload,
+        id: docId,
+        createdAt: new Date().toISOString().split('T')[0]
+      };
 
-    try {
-      await addFirestoreReview(newRevPayload);
+      setReviews(prev => {
+        if (prev.some(r => r.id === docId)) return prev;
+        return [savedReview, ...prev];
+      });
+
       setUserComment('');
       setReviewSubmitted(true);
       setTimeout(() => setReviewSubmitted(false), 4500);
     } catch (err: any) {
       console.error('Failed to submit review to Firestore:', err);
-      setSubmitError('Review saved locally, will sync when online.');
-      setTimeout(() => setSubmitError(null), 4500);
+      setSubmitError(err?.message || 'Failed to submit review. Please try again.');
+      setTimeout(() => setSubmitError(null), 5000);
     } finally {
       setIsSubmitting(false);
     }
@@ -279,42 +276,65 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
         )}
       </div>
 
-      {/* Write a Review Box */}
-      <form onSubmit={handleSubmitReview} className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-          Leave Your Review
-        </h4>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">Your Name</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Tunde Balogun"
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
+      {/* Write a Review Box (Logged-in users with an account username only) */}
+      {!currentUser ? (
+        <div
+          id="review-auth-prompt"
+          className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3"
+        >
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+            Leave Your Review
+          </h4>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            <p className="text-xs sm:text-sm text-slate-300">
+              You must be signed in to rate this film and publish a community review.
+            </p>
+            <button
+              type="button"
+              id="review-signin-btn"
+              onClick={() => onOpenAuth?.()}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs sm:text-sm transition-all shrink-0 cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Sign in to leave a review</span>
+            </button>
+          </div>
+        </div>
+      ) : !accountUsername ? (
+        <div
+          id="review-username-required-prompt"
+          className="bg-slate-900/70 border border-amber-500/30 rounded-2xl p-4 sm:p-5 space-y-2"
+        >
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+            Leave Your Review
+          </h4>
+          <div className="flex items-start gap-2.5 text-xs sm:text-sm text-amber-300">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+            <p>
+              Please set a username on your account first before leaving a review.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmitReview} className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              Leave Your Review
+            </h4>
+            <span className="text-xs text-slate-400">
+              Posting as <strong className="text-emerald-400">{accountUsername}</strong>
+            </span>
           </div>
 
           <div>
-            <label className="text-xs text-slate-400 block mb-1">Your City / State</label>
-            <input
-              type="text"
-              placeholder="e.g. Lagos, Abuja, London, Atlanta"
-              value={userLocation}
-              onChange={(e) => setUserLocation(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">Rating (1 to 10)</label>
+            <label htmlFor="review-rating-select" className="text-xs text-slate-400 block mb-1">
+              Rating (1 to 10)
+            </label>
             <select
+              id="review-rating-select"
               value={userRating}
               onChange={(e) => setUserRating(Number(e.target.value))}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full sm:w-72 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
               {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((num) => (
                 <option key={num} value={num}>
@@ -323,47 +343,50 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
               ))}
             </select>
           </div>
-        </div>
 
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Your Thoughts on the Film</label>
-          <textarea
-            required
-            rows={3}
-            placeholder="What made this movie memorable? Acting, direction, plot twists, soundtrack..."
-            value={userComment}
-            onChange={(e) => setUserComment(e.target.value)}
-            className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-          />
-        </div>
+          <div>
+            <label htmlFor="review-comment-textarea" className="text-xs text-slate-400 block mb-1">
+              Your Thoughts on the Film
+            </label>
+            <textarea
+              id="review-comment-textarea"
+              required
+              rows={3}
+              placeholder="What made this movie memorable? Acting, direction, plot twists, soundtrack..."
+              value={userComment}
+              onChange={(e) => setUserComment(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-          {reviewSubmitted ? (
-            <span className="text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              Review submitted successfully! Thank you for supporting Nollywood cinema.
-            </span>
-          ) : submitError ? (
-            <span className="text-xs text-amber-400 flex items-center gap-1.5 font-medium">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              {submitError}
-            </span>
-          ) : (
-            <span className="text-xs text-slate-500">
-              Your review helps others discover authentic Nigerian stories.
-            </span>
-          )}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            {reviewSubmitted ? (
+              <span className="text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                Review submitted successfully! Thank you for supporting Nollywood cinema.
+              </span>
+            ) : submitError ? (
+              <span className="text-xs text-amber-400 flex items-center gap-1.5 font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {submitError}
+              </span>
+            ) : (
+              <span className="text-xs text-slate-500">
+                Your review helps others discover authentic Nigerian stories.
+              </span>
+            )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs sm:text-sm transition-all"
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>{isSubmitting ? 'Submitting...' : 'Submit Review'}</span>
-          </button>
-        </div>
-      </form>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs sm:text-sm transition-all cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{isSubmitting ? 'Submitting...' : 'Submit Review'}</span>
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Reviews List strictly filtered for this movie */}
       <div className="space-y-3">
@@ -387,11 +410,10 @@ export const ReviewSection: React.FC<ReviewSectionProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-xs uppercase">
-                    {rev.userName ? rev.userName[0] : 'N'}
+                    {rev.userName ? rev.userName.charAt(0).toUpperCase() : '?'}
                   </div>
                   <div>
                     <span className="text-xs sm:text-sm font-bold text-white">{rev.userName}</span>
-                    <span className="text-[11px] text-slate-400 ml-2">from {rev.userLocation}</span>
                   </div>
                 </div>
 

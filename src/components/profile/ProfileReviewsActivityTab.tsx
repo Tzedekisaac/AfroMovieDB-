@@ -46,7 +46,7 @@ export const ProfileReviewsTab: React.FC<ProfileReviewsTabProps> = ({
                   </div>
                   <p className="text-xs text-slate-300 leading-relaxed font-sans">{r.comment}</p>
                   <div className="text-[10px] text-slate-500 font-mono">
-                    Posted {r.createdAt} • {r.userLocation}
+                    Posted {r.createdAt}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

@@ -321,36 +321,38 @@ export function useMovieCatalog(options: UseMovieCatalogOptions = {}): UseMovieC
     []
   );
 
-  // Add review handler (syncs securely to Firestore and falls back to local storage)
+  // Add review handler (requires authenticated user and valid account username)
   const addReview = useCallback(async (newRev: Omit<UserReview, 'id' | 'createdAt'>) => {
+    const activeUser = currentUserRef.current;
+    if (!activeUser) {
+      throw new Error('Authentication required to submit a review.');
+    }
+
+    const trimmedUserName = newRev.userName?.trim() || '';
+    if (!trimmedUserName) {
+      throw new Error('Please set a username on your account first.');
+    }
+
+    const docId = await addFirestoreReview({
+      ...newRev,
+      userName: trimmedUserName,
+      userId: activeUser.uid,
+      userEmail: activeUser.email || undefined,
+    });
+
     const fullReview: UserReview = {
       ...newRev,
-      id: 'usr-rev-' + Date.now(),
+      userName: trimmedUserName,
+      userId: activeUser.uid,
+      userEmail: activeUser.email || undefined,
+      id: docId,
       createdAt: new Date().toISOString().split('T')[0],
     };
 
-    setInternalReviews((prev) => [fullReview, ...prev]);
-
-    try {
-      const saved = localStorage.getItem(REVIEWS_STORAGE_KEY);
-      const userAdded = saved ? JSON.parse(saved) : [];
-      localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify([fullReview, ...userAdded]));
-    } catch (e) {
-      console.error('Failed to save review locally', e);
-    }
-
-    const activeUser = currentUserRef.current;
-    if (activeUser) {
-      try {
-        await addFirestoreReview({
-          ...newRev,
-          userId: activeUser.uid,
-          userEmail: activeUser.email || undefined,
-        });
-      } catch (err) {
-        console.warn('Firestore review sync failed (saved locally):', err);
-      }
-    }
+    setInternalReviews((prev) => {
+      if (prev.some((r) => r.id === docId)) return prev;
+      return [fullReview, ...prev];
+    });
   }, []);
 
   // Delete review handler (deletes from Firestore and local storage)

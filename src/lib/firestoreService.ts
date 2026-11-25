@@ -510,6 +510,7 @@ function mapSnapshotToUserProfile(
   return {
     uid,
     email,
+    username: typeof data.username === 'string' ? data.username : null,
     displayName: data.displayName || null,
     photoURL: data.photoURL || null,
     role,
@@ -573,6 +574,7 @@ export async function syncUserProfileOnLogin(user: {
       return {
         uid: user.uid,
         email: user.email || data.email || null,
+        username: typeof data.username === 'string' ? data.username : null,
         displayName: user.displayName || data.displayName || null,
         photoURL: user.photoURL || data.photoURL || null,
         role: currentRole,
@@ -781,13 +783,12 @@ export function subscribeToMovieReviews(
     return {
       id: docSnap.id,
       movieId: d.movieId || currentMovieId,
-      userName: d.userName || 'Anonymous',
+      userName: typeof d.userName === 'string' ? d.userName.trim() : '',
       rating: typeof d.rating === 'number' ? d.rating : 10,
       comment: d.comment || '',
       createdAt: d.createdAt
         ? (d.createdAt.toDate ? d.createdAt.toDate().toISOString().split('T')[0] : String(d.createdAt))
         : new Date().toISOString().split('T')[0],
-      userLocation: d.userLocation || 'Nigeria',
       userId: d.userId || undefined,
       userEmail: d.userEmail || undefined
     };
@@ -848,11 +849,10 @@ export function subscribeToReviews(
       list.push({
         id: docSnap.id,
         movieId: d.movieId || '',
-        userName: d.userName || 'Anonymous',
+        userName: typeof d.userName === 'string' ? d.userName.trim() : '',
         rating: typeof d.rating === 'number' ? d.rating : 10,
         comment: d.comment || '',
         createdAt: d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate().toISOString().split('T')[0] : String(d.createdAt)) : new Date().toISOString().split('T')[0],
-        userLocation: d.userLocation || 'Nigeria',
         userId: d.userId || undefined,
         userEmail: d.userEmail || undefined
       });
@@ -864,6 +864,27 @@ export function subscribeToReviews(
   });
 }
 
+/**
+ * Resolves the review author display name strictly from account username / display name.
+ * Never uses fallback placeholder names like "NaijaReel Member" or email prefixes.
+ */
+export function resolveReviewAuthorName(
+  userProfile?: { username?: string | null; displayName?: string | null } | null,
+  user?: { displayName?: string | null } | null
+): string {
+  const candidates = [
+    userProfile?.username,
+    userProfile?.displayName,
+    user?.displayName
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return '';
+}
+
 export async function addFirestoreReview(
   review: Omit<UserReview, 'id' | 'createdAt'> & { userId?: string; userEmail?: string }
 ): Promise<string> {
@@ -873,7 +894,12 @@ export async function addFirestoreReview(
   }
 
   if (!auth.currentUser) {
-    return 'local-rev-' + Date.now();
+    throw new Error('Authentication required to submit a review.');
+  }
+
+  const trimmedUserName = typeof review.userName === 'string' ? review.userName.trim() : '';
+  if (!trimmedUserName) {
+    throw new Error('Account username is required to submit a review.');
   }
 
   const numericRating = typeof review.rating === 'number'
@@ -882,10 +908,9 @@ export async function addFirestoreReview(
 
   const payload = stripUndefined({
     movieId: currentMovieId,
-    userName: review.userName?.trim() || 'Anonymous',
+    userName: trimmedUserName,
     rating: numericRating,
     comment: review.comment?.trim() || '',
-    userLocation: review.userLocation?.trim() || 'Nigeria',
     userId: review.userId || auth.currentUser.uid,
     userEmail: review.userEmail || auth.currentUser.email || null,
     createdAt: serverTimestamp()

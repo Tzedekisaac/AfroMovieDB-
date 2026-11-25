@@ -515,6 +515,7 @@ export default function App() {
         trackingMap={trackingMap}
         reviews={reviews}
         currentUser={currentUser}
+        userProfile={currentUserProfile}
         onToggleWatchlist={handleToggleWatchlist}
         onClearWatchlist={handleClearWatchlist}
         onUpdateTrackingStatus={handleUpdateTrackingStatus}

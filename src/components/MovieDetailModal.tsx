@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Movie, UserReview, MovieWatchStatus } from '../types';
+import { Movie, UserReview, MovieWatchStatus, AppUserProfile } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { 
   X, Play, Star, Bookmark, Trophy, Flame, 
@@ -28,6 +28,7 @@ interface MovieDetailModalProps {
   reviews?: UserReview[];
   onAddReview?: (review: Omit<UserReview, 'id' | 'createdAt'>) => void;
   currentUser?: FirebaseUser | null;
+  userProfile?: AppUserProfile | null;
   onOpenEdit?: (movie: Movie) => void;
   onUpdateMovie?: (movie: Movie) => void;
   onOpenAuth?: () => void;
@@ -104,6 +105,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   reviews,
   onAddReview,
   currentUser,
+  userProfile,
   onOpenEdit,
   onUpdateMovie,
   onOpenAuth
@@ -719,6 +721,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             movieId={movie.id}
             movie={movie}
             currentUser={currentUser}
+            userProfile={userProfile}
             onOpenAuth={onOpenAuth}
           />
 

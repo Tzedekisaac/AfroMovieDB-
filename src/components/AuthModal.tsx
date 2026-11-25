@@ -7,6 +7,7 @@ import {
   User 
 } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
+import { syncUserProfileOnLogin } from '../lib/firestoreService';
 import { X, Mail, Lock, User as UserIcon, LogIn, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface AuthModalProps {
@@ -67,6 +68,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const userCred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         if (displayName.trim() && userCred.user) {
           await updateProfile(userCred.user, { displayName: displayName.trim() });
+          await syncUserProfileOnLogin({
+            uid: userCred.user.uid,
+            email: userCred.user.email,
+            displayName: displayName.trim(),
+            photoURL: userCred.user.photoURL
+          });
         }
       } else {
         await signInWithEmailAndPassword(auth, email.trim(), password);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateMovieRatingBreakdown } from '../src/lib/firestoreService.ts';
+import { calculateMovieRatingBreakdown, resolveReviewAuthorName } from '../src/lib/firestoreService.ts';
 import { INITIAL_REVIEWS } from '../src/data/reviews.ts';
 
 test('1. calculateMovieRatingBreakdown computes accurate 5-star to 1-star distribution for a movie', () => {
@@ -134,4 +134,43 @@ test('4. Hardcoded mock reviews (e.g. Babatunde Alao, 2023) are removed and 0 re
   const unrelatedMovieId = 'an-unreviewed-film-999';
   const unrelatedInitial = INITIAL_REVIEWS.filter(r => r.movieId === unrelatedMovieId);
   assert.strictEqual(unrelatedInitial.length, 0);
+});
+
+test('5. resolveReviewAuthorName uses account username/displayName strictly with zero fallback labels', () => {
+  // Prefers userProfile.username
+  assert.strictEqual(
+    resolveReviewAuthorName(
+      { username: '  adaeze_cinema  ', displayName: 'Adaeze Profile' },
+      { displayName: 'Adaeze Auth' }
+    ),
+    'adaeze_cinema'
+  );
+
+  // Falls back to userProfile.displayName when username is missing/blank
+  assert.strictEqual(
+    resolveReviewAuthorName(
+      { username: '   ', displayName: 'Chidi Okafor' },
+      { displayName: 'Chidi Auth' }
+    ),
+    'Chidi Okafor'
+  );
+
+  // Falls back to user.displayName when userProfile lacks username/displayName
+  assert.strictEqual(
+    resolveReviewAuthorName(
+      { username: null, displayName: null },
+      { displayName: 'Kemi Adetiba' }
+    ),
+    'Kemi Adetiba'
+  );
+
+  // Never invents fallback labels (e.g. "NaijaReel Member", "Anonymous", or email prefix)
+  assert.strictEqual(
+    resolveReviewAuthorName(null, { displayName: '   ' }),
+    ''
+  );
+  assert.strictEqual(
+    resolveReviewAuthorName(undefined, undefined),
+    ''
+  );
 });

@@ -114,7 +114,7 @@ export interface UserReview {
   rating: number;
   comment: string;
   createdAt: string;
-  userLocation: string;
+  userLocation?: string;
   userId?: string;
   userEmail?: string;
 }
@@ -175,6 +175,7 @@ export type UserRole = 'owner' | 'admin' | 'moderator' | 'user';
 export interface AppUserProfile {
   uid: string;
   email?: string | null;
+  username?: string | null;
   displayName?: string | null;
   photoURL?: string | null;
   role: UserRole;

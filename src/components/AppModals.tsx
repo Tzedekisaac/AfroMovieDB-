@@ -11,6 +11,7 @@ import { CustomListModal } from './CustomListModal';
 import { SiteInfoModal } from './SiteInfoModal';
 import type { UseModalRouterResult } from '../hooks/useModalRouter';
 import type {
+  AppUserProfile,
   CustomUserList,
   Movie,
   MovieWatchStatus,
@@ -26,6 +27,7 @@ export interface AppModalsProps {
   trackingMap: Map<string, UserTrackedItem>;
   reviews: UserReview[];
   currentUser: User | null;
+  userProfile?: AppUserProfile | null;
   onToggleWatchlist: (movieId: string) => void;
   onClearWatchlist: () => void;
   onUpdateTrackingStatus: (movieId: string, status: MovieWatchStatus | null) => Promise<void>;
@@ -46,6 +48,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   trackingMap,
   reviews,
   currentUser,
+  userProfile,
   onToggleWatchlist,
   onClearWatchlist,
   onUpdateTrackingStatus,
@@ -120,6 +123,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           reviews={reviews}
           onAddReview={onAddReview}
           currentUser={currentUser}
+          userProfile={userProfile}
           onOpenEdit={openEditMovie}
           onUpdateMovie={onUpdateMovie}
           onOpenAuth={openAuth}
